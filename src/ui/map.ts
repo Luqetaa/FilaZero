@@ -1,0 +1,259 @@
+import * as L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import 'maplibre-gl/dist/maplibre-gl.css';
+import { setWorkerUrl } from 'maplibre-gl';
+import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
+import { maplibreGL } from '@maplibre/maplibre-gl-leaflet';
+import { minimalMapStyle } from './mapStyle.ts';
+
+setWorkerUrl(maplibreWorkerUrl);
+
+export type MapStatus = 'loading' | 'ready' | 'partial' | 'error';
+export interface MapPoint {
+  id: string;
+  location: { lat: number; lng: number };
+  number: string;
+  type: string;
+  tone: string;
+  statusText: string;
+  label: string;
+}
+export interface CityMap {
+  update(points: MapPoint[], selectedId: string | null): void;
+  select(id: string | null): void;
+  retry(): void;
+  getCenter(): { lat: number; lng: number };
+  setUserLocation(location: { lat: number; lng: number } | null, options?: { center?: boolean }): void;
+}
+
+export function initMap(
+  container: HTMLElement,
+  reference: { center: { lat: number; lng: number }; zoom: number },
+  onStatus: (status: MapStatus) => void,
+  onSelect: (id: string, trigger: HTMLButtonElement) => void,
+  onMove?: (center: { lat: number; lng: number }) => void,
+  onUserPan?: () => void,
+): CityMap {
+  const map = L.map(container, {
+    attributionControl: false,
+    zoomControl: false,
+    minZoom: 1,
+    maxZoom: 19,
+    scrollWheelZoom: false,
+    zoomAnimation: false,
+    fadeAnimation: false,
+    markerZoomAnimation: false,
+    inertia: false,
+  });
+  let tiles: L.MaplibreGL | null = null;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let attempt = 0;
+  let userMarker: L.Marker | null = null;
+  const markers = new Map<string, { marker: L.Marker; button: HTMLButtonElement }>();
+
+  function centerAt(location: { lat: number; lng: number }, zoom = map.getZoom()) {
+    map.setView([location.lat, location.lng], zoom, { animate: false });
+    if (container.clientWidth > 900) {
+      map.panBy([-Math.min(200, Math.round(container.clientWidth * 0.14)), -30], { animate: false });
+    }
+  }
+
+  function setUserLocation(location: { lat: number; lng: number } | null, options?: { center?: boolean }) {
+    if (!location) {
+      userMarker?.remove();
+      userMarker = null;
+      return;
+    }
+    if (!userMarker) {
+      const markerEl = document.createElement('div');
+      markerEl.className = 'user-location-marker';
+      markerEl.setAttribute('role', 'img');
+      markerEl.setAttribute('aria-label', 'Sua localização atual');
+      markerEl.innerHTML = '<span class="user-location-halo" aria-hidden="true"></span><span class="user-location-core" aria-hidden="true"></span>';
+      userMarker = L.marker([location.lat, location.lng], {
+        pane: 'userLocationPane',
+        interactive: false,
+        keyboard: false,
+        icon: L.divIcon({
+          html: markerEl,
+          className: 'user-location-icon',
+          iconSize: [36, 36],
+          iconAnchor: [18, 18],
+        }),
+      }).addTo(map);
+    } else {
+      userMarker.setLatLng([location.lat, location.lng]);
+    }
+    if (options?.center) {
+      centerAt(location, Math.max(map.getZoom(), 13));
+    }
+  }
+
+  function ensureMarkerVisible(marker: L.Marker) {
+    const size = map.getSize();
+    if (!size.x || !size.y) return;
+    const desktop = size.x > 900;
+    const left = desktop ? 420 : 28;
+    const top = desktop ? 116 : 150;
+    const right = size.x - 56;
+    const bottom = desktop ? size.y - 96 : size.y - 180;
+    if (left >= right || top >= bottom) return;
+    const pos = map.latLngToContainerPoint(marker.getLatLng());
+    const dx = pos.x < left ? pos.x - left : pos.x > right ? pos.x - right : 0;
+    const dy = pos.y < top ? pos.y - top : pos.y > bottom ? pos.y - bottom : 0;
+    if (dx || dy) map.panBy([dx, dy], { animate: false });
+  }
+
+  function select(id: string | null) {
+    for (const [key, { marker, button }] of markers) {
+      const selected = key === id;
+      button.classList.toggle('is-selected', selected);
+      button.setAttribute('aria-pressed', String(selected));
+      marker.setZIndexOffset(selected ? 1000 : 0);
+      if (selected) ensureMarkerVisible(marker);
+    }
+  }
+
+  function retry() {
+    const currentAttempt = ++attempt;
+    clearTimeout(timeout);
+    tiles?.remove();
+    tiles = null;
+    let loaded = 0;
+    let failed = 0;
+    let ready = false;
+    const reportFailure = () => onStatus(loaded ? 'partial' : 'error');
+    const armTimeout = () => {
+      clearTimeout(timeout);
+      if (ready) return;
+      timeout = setTimeout(() => {
+        if (currentAttempt !== attempt) return;
+        if (loaded) {
+          onStatus('partial');
+          return;
+        }
+        ++attempt;
+        tiles?.remove();
+        tiles = null;
+        onStatus('error');
+      }, 20_000);
+    };
+
+    onStatus('loading');
+    armTimeout();
+
+    try {
+      tiles = maplibreGL({
+        style: minimalMapStyle,
+        interactive: false,
+      });
+      tiles.addTo(map);
+    } catch {
+      clearTimeout(timeout);
+      tiles = null;
+      onStatus('error');
+      return;
+    }
+
+    const glMap = tiles.getMaplibreMap();
+    glMap.on('dataloading', () => {
+      if (currentAttempt !== attempt) return;
+      if (failed) reportFailure();
+      else if (!ready) {
+        onStatus('loading');
+        armTimeout();
+      }
+    });
+    glMap.on('sourcedata', event => {
+      if (currentAttempt !== attempt) return;
+      if (event.tile) {
+        ++loaded;
+        if (failed) reportFailure();
+      }
+    });
+    glMap.on('error', () => {
+      if (currentAttempt !== attempt) return;
+      ++failed;
+      reportFailure();
+    });
+    glMap.on('idle', () => {
+      if (currentAttempt !== attempt) return;
+      clearTimeout(timeout);
+      if (failed) reportFailure();
+      else {
+        ready = true;
+        onStatus('ready');
+      }
+    });
+  }
+
+  try {
+    L.control.zoom({ position: 'topright', zoomInTitle: 'Aumentar zoom', zoomOutTitle: 'Diminuir zoom' }).addTo(map);
+    const pane = map.getPane('markerPane')!;
+    pane.setAttribute('role', 'group');
+    pane.setAttribute('aria-label', 'Unidades de saúde no mapa de São Paulo');
+    const userPane = map.createPane('userLocationPane');
+    userPane.style.zIndex = '610';
+    userPane.style.pointerEvents = 'none';
+    centerAt(reference.center, reference.zoom);
+    retry();
+    map.on('dragstart', () => onUserPan?.());
+    map.on('moveend', () => {
+      const center = map.getCenter();
+      onMove?.({ lat: center.lat, lng: center.lng });
+    });
+
+    return {
+      retry,
+      select,
+      setUserLocation,
+      getCenter() {
+        const center = map.getCenter();
+        return { lat: center.lat, lng: center.lng };
+      },
+      update(points, selectedId) {
+        const visibleIds = new Set(points.map(point => point.id));
+        for (const [id, entry] of markers) {
+          if (!visibleIds.has(id)) {
+            entry.marker.remove();
+            markers.delete(id);
+          }
+        }
+        for (const point of points) {
+          let entry = markers.get(point.id);
+          if (!entry) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.dataset.unit = point.id;
+            button.setAttribute('aria-haspopup', 'dialog');
+            button.innerHTML = '<span class="marker-pill"><i class="dot"></i><span class="marker-number"></span><span class="marker-type sr-only"></span><span class="marker-sep" aria-hidden="true">·</span><span class="marker-status-text"></span></span>';
+            L.DomEvent.disableClickPropagation(button);
+            L.DomEvent.on(button, 'keydown keyup', L.DomEvent.stopPropagation);
+            button.addEventListener('click', () => onSelect(point.id, button));
+            const marker = L.marker([point.location.lat, point.location.lng], {
+              keyboard: false,
+              autoPanOnFocus: false,
+              icon: L.divIcon({ html: button, className: 'unit-map-icon', iconSize: [104, 44], iconAnchor: [52, 41] }),
+            }).addTo(map);
+            entry = { marker, button };
+            markers.set(point.id, entry);
+          }
+          const { marker, button } = entry;
+          marker.setLatLng([point.location.lat, point.location.lng]);
+          button.className = `map-marker ${point.tone}`;
+          button.setAttribute('aria-label', point.label);
+          button.querySelector('.marker-number')!.textContent = point.number;
+          button.querySelector('.marker-type')!.textContent = point.type;
+          button.querySelector('.dot')!.className = `dot ${point.tone}`;
+          button.querySelector('.marker-status-text')!.textContent = point.statusText;
+        }
+        select(selectedId);
+      },
+    };
+  } catch (error) {
+    ++attempt;
+    clearTimeout(timeout);
+    map.remove();
+    throw error;
+  }
+}
