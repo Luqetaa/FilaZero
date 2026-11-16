@@ -5,8 +5,6 @@ import {
   distanceKm,
   formatDistance,
   sortByNearest,
-  estimateUnitJourney,
-  formatDuration,
   formatTotalDurationRange,
   formatWait,
   formatUpdatedAt,
@@ -16,10 +14,10 @@ import {
 import type { Coordinates } from './data/units.ts';
 import type { HealthUnit, QueueLevel, UnitType } from './types.ts';
 import type { CityMap, MapPoint, MapStatus } from './ui/map.ts';
+import { fetchRouteJson, type Comparison, type RouteResult } from './data/routes.ts';
 
 const officialSource = 'https://www.gov.br/saude/pt-br/composicao/saes/samu-192/samu-192';
 const clinicalWarning = 'A prioridade clínica e a unidade adequada dependem da avaliação da equipe de saúde.';
-const emergency = `<div class="emergency"><div><strong>Em caso de emergência</strong><p>Ligue para o SAMU 192 ou procure o pronto-socorro mais próximo.</p></div><a class="button emergency-call" href="tel:192">SAMU 192 <span aria-hidden="true">↗</span></a></div>`;
 const escapeHtml = (value: string) => value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
 
 const ringCircumference = 2 * Math.PI * 13;
@@ -61,7 +59,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <div class="search-field"><label class="sr-only" for="search">Buscar unidade por nome ou bairro</label><div class="input-wrap"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg><input id="search" type="search" placeholder="Buscar unidade" autocomplete="off" /></div></div>
       <a class="header-samu button glass-pill" href="tel:192" aria-label="Emergência · SAMU 192">SAMU 192 <span aria-hidden="true">↗</span></a>
     </div>
-    <fieldset class="filters"><legend class="sr-only">Tipo de unidade</legend><div>${([['all', 'Todas', null], ['UBS', 'UBS', 'UBS'], ['UPA', 'UPA', 'UPA'], ['Hospital', 'Hospitais', 'Hospital']] as const).map(([value, label, iconType]) => `<button type="button" data-type="${value}" aria-pressed="${value === 'all'}">${iconType ? unitTypeIcon(iconType) : ''}<span>${label}</span></button>`).join('')}</div></fieldset>
+    <fieldset class="filters"><legend class="sr-only">Tipo de unidade</legend><div>${([['all', 'Todas', null], ['UBS', 'UBS', 'UBS'], ['UPA', 'UPA', 'UPA'], ['Hospital', 'Hospitais', 'Hospital']] as const).map(([value, label, iconType]) => `<button type="button" data-type="${value}" aria-pressed="${value === 'all'}">${iconType ? unitTypeIcon(iconType) : ''}<span>${label}</span></button>`).join('')}<a class="button simulation-entry" href="/simulador.html">Simular trajetos <span aria-hidden="true">→</span></a></div></fieldset>
   </header>
   <main id="main" class="workspace" tabindex="-1">
     <section class="list-panel glass" aria-labelledby="list-title" data-expanded="false">
@@ -91,7 +89,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <div class="map-attribution glass"><a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors<span class="sr-only"> (abre em nova aba)</span></a><span>&nbsp;·&nbsp;</span><a href="https://openfreemap.org" target="_blank" rel="noopener noreferrer">© OpenFreeMap<span class="sr-only"> (abre em nova aba)</span></a><span>&nbsp;·&nbsp;</span><a href="https://openmaptiles.org/" target="_blank" rel="noopener noreferrer">© OpenMapTiles<span class="sr-only"> (abre em nova aba)</span></a></div>
     </section>
   </main>
-  <dialog id="unit-dialog" class="glass-strong" aria-labelledby="dialog-title"><div id="dialog-content"></div></dialog>`;
+`;
 
 const search = document.querySelector<HTMLInputElement>('#search')!;
 const list = document.querySelector<HTMLDivElement>('#unit-list')!;
@@ -100,7 +98,6 @@ const mapStatus = document.querySelector<HTMLParagraphElement>('#map-status')!;
 const retryMap = document.querySelector<HTMLButtonElement>('#retry-map')!;
 const count = document.querySelector<HTMLParagraphElement>('#result-count')!;
 const scenario = document.querySelector<HTMLSelectElement>('#scenario')!;
-const dialog = document.querySelector<HTMLDialogElement>('#unit-dialog')!;
 const sheet = document.querySelector<HTMLElement>('.list-panel')!;
 const sheetSummary = document.querySelector<HTMLElement>('.sheet-summary')!;
 const sheetContent = document.querySelector<HTMLDivElement>('#sheet-content')!;
@@ -113,7 +110,6 @@ let units: HealthUnit[] = [];
 let type: UnitType | 'all' = 'all';
 let status: 'loading' | 'ready' | 'error' = 'loading';
 let selectedId: string | null = null;
-let returnFocus: HTMLElement | null = null;
 let loadVersion = 0;
 let cityMap: CityMap | null = null;
 let initializingMap = false;
@@ -122,10 +118,87 @@ let renderedCenter: Coordinates = { ...mapReference.center };
 let userLocation: Coordinates | null = null;
 let locating = false;
 let locateError = '';
-let pendingMoveRender = false;
 let hasManualPan = false;
 let watchId: number | null = null;
 const activeOrigin = (): Coordinates => userLocation ?? mapCenter;
+let routeComparison: Comparison | null = null;
+let journeys = new Map<string, RouteResult>();
+let journeyState: 'idle' | 'loading' | 'ready' | 'error' = 'idle';
+let journeyError = '';
+let journeyVersion = 0;
+let journeyController: AbortController | null = null;
+let locationAccuracy: number | null = null;
+let locationTimestamp = 0;
+let manualOrigin = false;
+let choosingOrigin = false;
+let locationVersion = 0;
+document.querySelector('.list-tools')!.insertAdjacentHTML('afterend', '<div class="origin-controls"><button type="button" id="choose-origin" aria-pressed="false">Corrigir localização no mapa</button><button type="button" id="use-map-center" hidden>Usar centro do mapa</button></div><div class="route-api-status" id="route-api-status" role="status" aria-live="polite"></div>');
+document.querySelector('.workspace')!.insertAdjacentHTML('beforeend', '<p class="origin-hint" id="origin-hint" role="status"></p>');
+const chooseOrigin = document.querySelector<HTMLButtonElement>('#choose-origin')!;
+const centerOrigin = document.querySelector<HTMLButtonElement>('#use-map-center')!;
+const originHint = document.querySelector<HTMLElement>('#origin-hint')!;
+
+function selectManualOrigin(location: Coordinates) {
+  if (!choosingOrigin) return;
+  choosingOrigin = false;
+  manualOrigin = true;
+  ++locationVersion;
+  locating = false;
+  if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+  watchId = null;
+  userLocation = location;
+  locationAccuracy = null;
+  chooseOrigin.setAttribute('aria-pressed', 'false');
+  centerOrigin.hidden = true;
+  originHint.textContent = 'Origem escolhida no mapa. Os trajetos serão recalculados.';
+  cityMap?.setUserLocation(location, { manual: true });
+  void loadJourneys();
+}
+
+chooseOrigin.addEventListener('click', () => {
+  choosingOrigin = !choosingOrigin;
+  if (choosingOrigin) { ++locationVersion; locating = false; updateSortStatus(); }
+  chooseOrigin.setAttribute('aria-pressed', String(choosingOrigin));
+  centerOrigin.hidden = !choosingOrigin;
+  originHint.textContent = choosingOrigin ? 'Clique no ponto correto do mapa ou mova o mapa e use o centro.' : '';
+  if (choosingOrigin && mobileLayout.matches) setSheetExpanded(false);
+});
+centerOrigin.addEventListener('click', () => { if (cityMap) selectManualOrigin(cityMap.getCenter()); });
+
+function drawJourney(fit = false) {
+  const selected = journeys.get(selectedId ?? '');
+  cityMap?.setSimulation({
+    pontos: routeComparison ? [routeComparison.origem_ponto] : [], ruas: [], bloqueadas: [],
+    origem: routeComparison?.origem ?? '', caminho: selected?.geometria ?? [],
+  }, fit && !!selected?.geometria.length);
+}
+
+async function loadJourneys() {
+  if (!userLocation) return;
+  const version = ++journeyVersion;
+  journeyController?.abort();
+  const controller = journeyController = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 45_000);
+  journeyState = 'loading'; routeComparison = null; journeys = new Map();
+  drawJourney(); render();
+  try {
+    const comparison = await fetchRouteJson<Comparison>('/api/comparar', controller.signal, { origem: userLocation });
+    if (version !== journeyVersion) return;
+    routeComparison = comparison;
+    journeys = new Map(comparison.resultados.map(unit => [unit.id, unit]));
+    journeyState = 'ready';
+    drawJourney();
+  } catch (error) {
+    if (version !== journeyVersion) return;
+    journeyState = 'error';
+    journeyError = controller.signal.aborted ? 'O cálculo demorou mais que o esperado. Tente novamente.' : error instanceof Error ? error.message : 'Não foi possível calcular os trajetos.';
+  } finally {
+    clearTimeout(timeout);
+    if (version === journeyVersion) {
+      render();
+    }
+  }
+}
 
 function reportMapStatus(state: MapStatus) {
   const messages: Record<MapStatus, string> = {
@@ -230,7 +303,7 @@ sheetSummary.addEventListener('click', event => {
   }
 });
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && !dialog.open && mobileLayout.matches && listExpanded) {
+  if (event.key === 'Escape' && mobileLayout.matches && listExpanded) {
     setSheetExpanded(false);
     event.preventDefault();
   }
@@ -262,16 +335,14 @@ async function startMap() {
         mapCenter = center;
         if (userLocation || status !== 'ready') return;
         if (distanceKm(renderedCenter, center) < 0.08) return;
-        if (dialog.open) {
-          pendingMoveRender = true;
-          return;
-        }
         render();
       },
       () => { hasManualPan = true; },
+      selectManualOrigin,
     );
-    if (userLocation) cityMap.setUserLocation(userLocation, { center: !hasManualPan });
+    if (userLocation) cityMap.setUserLocation(userLocation, { center: !hasManualPan, manual: manualOrigin, accuracy: locationAccuracy });
     syncMap();
+    drawJourney();
   } catch {
     reportMapStatus('error');
   } finally {
@@ -290,7 +361,8 @@ function syncMap() {
     type: unit.type === 'Hospital' ? 'HOSP' : unit.type,
     tone: tone(unit),
     statusText: statusText(unit),
-    label: `${unitNumber(unit)} · ${unit.name} · ${unit.neighborhood} · ${queueLabel(unit)} · ${formatWait(unit)}. Ver detalhes`,
+    label: `${unitNumber(unit)} · ${unit.name} · ${unit.neighborhood} · ${queueLabel(unit)} · ${formatWait(unit)}. Ver informações na lista`,
+    opensDialog: false,
   }));
   try { cityMap.update(points, selectedId); } catch { reportMapStatus('error'); }
 }
@@ -322,8 +394,8 @@ function updateSortStatus() {
   }
   locateMe.disabled = false;
   if (userLocation) {
-    sortLabel.textContent = 'Mais próximas de você';
-    locateMe.textContent = 'Centralizar em mim';
+    sortLabel.textContent = manualOrigin ? 'Mais próximas da origem escolhida' : 'Mais próximas de você';
+    locateMe.textContent = manualOrigin ? 'Usar minha localização' : 'Atualizar localização';
     locateMe.setAttribute('aria-pressed', 'true');
   } else {
     sortLabel.textContent = locateError || 'Mais próximas da região';
@@ -333,26 +405,27 @@ function updateSortStatus() {
 }
 
 function journeySummary(unit: HealthUnit) {
-  const estimate = estimateUnitJourney(unit, activeOrigin());
-  const distance = formatDistance(estimate.distanceKm);
-  const arrival = formatDuration(estimate.travelMinutes);
-  const total = estimate.totalMinutes ? formatTotalDurationRange(estimate.totalMinutes) : null;
+  const estimate = journeys.get(unit.id);
+  const calculated = estimate?.deslocamento !== null && estimate?.deslocamento !== undefined;
+  const distance = calculated ? formatDistance(estimate!.distancia_metros! / 1000) : `${formatDistance(distanceKm(activeOrigin(), unit.location))} em linha reta`;
+  const arrival = calculated ? `${Number(estimate!.deslocamento!.toFixed(1))} min` : 'indisponível';
+  const total = estimate?.total ? formatTotalDurationRange({ min: estimate.total[0], max: estimate.total[1] }) : null;
   const totalLine = total
-    ? `Chegada ~${escapeHtml(arrival)} · Total (espera + chegada): <strong>${escapeHtml(total)}</strong>`
-    : `Chegada ~${escapeHtml(arrival)} · <strong>Total indisponível</strong>`;
-  return { distance, arrival, total, totalLine };
+    ? `Carro por ruas OSM: ~${escapeHtml(arrival)} · Total (espera + chegada): <strong>${escapeHtml(total)}</strong>`
+    : calculated ? `Carro por ruas OSM: ~${escapeHtml(arrival)} · <strong>Total indisponível</strong>`
+    : journeyState === 'loading' ? 'Calculando trajeto por ruas…' : `<strong>${escapeHtml(estimate?.motivo_rota ?? (userLocation ? 'Trajeto indisponível' : 'Use sua localização para calcular o trajeto'))}</strong>`;
+  return { distance, arrival, total, totalLine, calculated };
 }
 
 function card(unit: HealthUnit, index: number) {
   const id = escapeHtml(unit.id);
   const level = tone(unit);
-  const { distance, arrival, totalLine } = journeySummary(unit);
-  const routeUrl = `https://www.openstreetmap.org/directions?from=${userLocation ? encodeURIComponent(`${userLocation.lat},${userLocation.lng}`) : ''}&to=${encodeURIComponent(`${unit.location.lat},${unit.location.lng}`)}`;
+  const { distance, arrival, totalLine, calculated } = journeySummary(unit);
   return `<article class="unit-card${selectedId === unit.id ? ' is-selected' : ''}" data-card="${id}" aria-labelledby="name-${id}">
     <div class="card-head">
       <div class="card-heading">
         <h3 id="name-${id}">${escapeHtml(unit.name)}</h3>
-        <p class="card-meta"><span class="unit-number">${unitNumber(unit)}</span><span class="unit-type">${unitTypeIcon(unit.type)}<span>${unit.type}</span></span><span aria-hidden="true">·</span><span class="unit-distance">${escapeHtml(distance)} (~${escapeHtml(arrival)})</span><span aria-hidden="true">·</span><span>${escapeHtml(unit.neighborhood)}</span>${index === 0 ? '<span class="nearest-badge">Mais próxima</span>' : ''}${unit.data.status === 'stale' ? '<strong class="stale-flag">Dados desatualizados</strong>' : ''}</p>
+        <p class="card-meta"><span class="unit-number">${unitNumber(unit)}</span><span class="unit-type">${unitTypeIcon(unit.type)}<span>${unit.type}</span></span><span aria-hidden="true">·</span><span class="unit-distance">${escapeHtml(distance)}${calculated ? ` (~${escapeHtml(arrival)})` : ''}</span><span aria-hidden="true">·</span><span>${escapeHtml(unit.neighborhood)}</span>${index === 0 ? '<span class="nearest-badge">Mais próxima em linha reta</span>' : ''}${unit.data.status === 'stale' ? '<strong class="stale-flag">Dados desatualizados</strong>' : ''}</p>
       </div>
       <span class="card-chevron" aria-hidden="true">›</span>
     </div>
@@ -368,15 +441,21 @@ function card(unit: HealthUnit, index: number) {
     <p class="hours">${escapeHtml(unit.openingHours)}</p>
     <div class="data-source"><p>${escapeHtml(unit.data.source)}</p><p>${escapeHtml(formatUpdatedAt(unit))}</p></div>
     <div class="card-actions">
-      <button class="details-button" type="button" data-unit="${id}" aria-haspopup="dialog" aria-label="Ver detalhes de ${escapeHtml(unit.name)}">Ver detalhes</button>
-      <a class="route-link" href="${routeUrl}" target="_blank" rel="noopener noreferrer">Traçar rota <span aria-hidden="true">↗</span><span class="sr-only"> para ${escapeHtml(unit.name)} (abre em nova aba)</span></a>
+      <button class="details-button" type="button" data-unit="${id}" aria-expanded="${selectedId === unit.id}" aria-controls="info-${id}" aria-label="Ver detalhes de ${escapeHtml(unit.name)}">${selectedId === unit.id ? 'Ocultar detalhes' : 'Ver detalhes'}</button>
+      <button class="route-link" type="button" data-route="${id}" ${calculated ? '' : 'disabled'} aria-label="Ver trajeto para ${escapeHtml(unit.name)}">Ver trajeto no mapa <span aria-hidden="true">↗</span></button>
     </div>
+    <div class="inline-unit-info" id="info-${id}" ${selectedId === unit.id ? '' : 'hidden'}><p>${escapeHtml(unit.description)}</p></div>
   </article>`;
 }
 
 function render() {
   list.setAttribute('aria-busy', String(status === 'loading'));
   updateSortStatus();
+  const routeStatus = document.querySelector('#route-api-status')!;
+  routeStatus.innerHTML = journeyState === 'loading' ? 'Calculando os trajetos das 30 unidades com sua localização…'
+    : journeyState === 'error' ? `${escapeHtml(journeyError)} <button type="button" id="retry-journeys">Recalcular trajetos</button>`
+    : journeyState === 'ready' ? `Trajetos calculados: ${[...journeys.values()].filter(u => u.deslocamento !== null).length} de ${units.length} unidades. Carro sem trânsito ao vivo · esperas simuladas.${locationAccuracy !== null ? ` Precisão da localização: ~${Math.round(locationAccuracy)} m.${locationAccuracy > 200 ? ' Localização aproximada: corrija no mapa se necessário.' : ''}` : ''} Localização usada apenas no cálculo local.`
+    : 'Use sua localização para calcular trajetos por ruas reais. A localização não é salva pelo aplicativo.';
   if (status !== 'ready') {
     const loading = status === 'loading';
     const title = loading ? 'Carregando unidades…' : 'Não foi possível carregar os dados.';
@@ -389,6 +468,7 @@ function render() {
   renderedCenter = { ...mapCenter };
   const visible = sortByNearest(filterUnits(units, search.value, type), activeOrigin());
   if (!visible.some(unit => unit.id === selectedId)) selectedId = null;
+  drawJourney();
   count.textContent = `${visible.length} ${visible.length === 1 ? 'unidade encontrada' : 'unidades encontradas'}`;
   mapState.textContent = visible.length ? '' : 'Nenhuma unidade para estes filtros. Ajuste a busca ou limpe os filtros.';
   syncMap();
@@ -415,25 +495,24 @@ async function loadUnits(mode = 'normal') {
 }
 
 function showDetails(id: string, trigger: HTMLElement) {
-  const unit = units.find(item => item.id === id);
-  if (!unit) return;
-  selectedId = unit.id;
-  returnFocus = trigger;
-  try { cityMap?.select(id); } catch { reportMapStatus('error'); }
-  document.querySelectorAll<HTMLElement>('[data-card]').forEach(element => {
-    const selected = element.dataset.card === id;
+  if (!units.some(unit => unit.id === id)) return;
+  const fromMap = !list.contains(trigger);
+  selectedId = !fromMap && selectedId === id ? null : id;
+  drawJourney();
+  try { cityMap?.select(selectedId); } catch { reportMapStatus('error'); }
+  for (const element of list.querySelectorAll<HTMLElement>('[data-card]')) {
+    const selected = element.dataset.card === selectedId;
     element.classList.toggle('is-selected', selected);
-  });
-  const level = tone(unit);
-  const { distance, arrival, total, totalLine } = journeySummary(unit);
-  const waitText = formatWait(unit);
-  const totalDetails = total
-    ? `${escapeHtml(total)} (${escapeHtml(waitText.replace(/^Espera estimada:\s*/i, ''))} de espera + ~${escapeHtml(arrival)} de chegada)`
-    : `Indisponível (chegada em ~${escapeHtml(arrival)}, mas sem previsão de fila)`;
-  document.querySelector('#dialog-content')!.innerHTML = `<div class="dialog-heading"><span class="eyebrow">Unidade ${unitNumber(unit)} · ${unit.type} · ${escapeHtml(distance)} · ~${escapeHtml(arrival)}</span><button type="button" class="close-button" autofocus aria-label="Fechar detalhes">✕</button></div><div class="dialog-body"><h2 id="dialog-title">${escapeHtml(unit.name)}</h2><div class="queue-panel ${level}">${statusRing(level, 'md', waitMinutes(unit))}<div class="queue-panel-text">${queueBadge(unit)}<p class="dialog-wait">${escapeHtml(waitText)}</p><p class="total-time">${totalLine}</p></div></div><dl><div><dt>Endereço</dt><dd>${escapeHtml(unit.address)}<br>${escapeHtml(unit.neighborhood)} · ${escapeHtml(unit.city)}</dd></div><div><dt>Distância e chegada</dt><dd>${escapeHtml(distance)} · ~${escapeHtml(arrival)} (${userLocation ? 'da sua localização' : 'do centro do mapa'})</dd></div><div><dt>Tempo total (espera + chegada)</dt><dd>${totalDetails}</dd></div><div><dt>Horário de funcionamento</dt><dd>${escapeHtml(unit.openingHours)}</dd></div><div><dt>Sobre a unidade</dt><dd>${escapeHtml(unit.description)}</dd></div><div><dt>Fonte cadastral</dt><dd>${escapeHtml(unit.data.source)}</dd></div><div><dt>Monitoramento de fila</dt><dd class="${unit.data.status === 'stale' ? 'stale-text' : ''}">${escapeHtml(formatUpdatedAt(unit))}</dd></div></dl><p class="clinical-note">${clinicalWarning}</p>${emergency}<a class="official-link" href="${officialSource}" target="_blank" rel="noopener noreferrer">Orientação oficial do SAMU · Ministério da Saúde ↗<span class="sr-only"> (abre em nova aba)</span></a></div>`;
-  dialog.showModal();
-  document.body.classList.add('dialog-open');
-  dialog.querySelector<HTMLButtonElement>('.close-button')!.focus();
+    const button = element.querySelector<HTMLButtonElement>('.details-button')!;
+    button.setAttribute('aria-expanded', String(selected));
+    button.textContent = selected ? 'Ocultar detalhes' : 'Ver detalhes';
+    element.querySelector<HTMLElement>('.inline-unit-info')!.hidden = !selected;
+  }
+  if (fromMap && selectedId) {
+    if (mobileLayout.matches) setSheetExpanded(true, false);
+    const selectedCard = [...list.querySelectorAll<HTMLElement>('[data-card]')].find(element => element.dataset.card === id);
+    selectedCard?.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+  }
 }
 
 search.addEventListener('input', render);
@@ -448,6 +527,14 @@ document.querySelector('.workspace')!.addEventListener('click', event => {
   const button = (event.target as Element).closest<HTMLButtonElement>('button');
   if (!button) return;
   if (button.dataset.unit) showDetails(button.dataset.unit, button);
+  if (button.dataset.route) {
+    selectedId = button.dataset.route;
+    drawJourney(true);
+    cityMap?.select(selectedId);
+    if (mobileLayout.matches) setSheetExpanded(false);
+    render();
+  }
+  if (button.id === 'retry-journeys') void loadJourneys();
   if (button.id === 'retry') {
     scenario.value = 'normal';
     void loadUnits().then(() => search.focus());
@@ -464,17 +551,24 @@ function startWatchingUserLocation() {
   if (watchId !== null || !('geolocation' in navigator)) return;
   watchId = navigator.geolocation.watchPosition(
     pos => {
+      if (manualOrigin || choosingOrigin) return;
       const next = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-      const movedEnough = !userLocation || distanceKm(userLocation, next) >= 0.08;
+      const accuracy = pos.coords.accuracy;
+      if (!Number.isFinite(accuracy) || accuracy <= 0 || pos.timestamp < locationTimestamp) return;
+      const distance = userLocation ? distanceKm(userLocation, next) * 1000 : Infinity;
+      if (userLocation && locationAccuracy !== null && accuracy > locationAccuracy && distance <= accuracy + locationAccuracy && pos.timestamp - locationTimestamp < 60_000) return;
+      if (distance < 20 && locationAccuracy !== null && accuracy >= locationAccuracy) return;
       userLocation = next;
-      cityMap?.setUserLocation(next);
-      if (movedEnough && status === 'ready') {
-        if (dialog.open) pendingMoveRender = true;
-        else render();
+      locationAccuracy = accuracy;
+      locationTimestamp = pos.timestamp;
+      cityMap?.setUserLocation(next, { accuracy });
+      if (status === 'ready') {
+        void loadJourneys();
+        render();
       }
     },
     () => { /* mantém a última localização válida se o sinal oscilar */ },
-    { enableHighAccuracy: true, maximumAge: 30_000 },
+    { enableHighAccuracy: true, maximumAge: 0 },
   );
 }
 
@@ -487,23 +581,30 @@ function requestUserLocation(center = true, silent = false) {
     return;
   }
   locating = true;
+  const version = ++locationVersion;
   if (!silent) locateError = '';
   updateSortStatus();
   navigator.geolocation.getCurrentPosition(
     pos => {
+      if (version !== locationVersion || choosingOrigin) return;
       locating = false;
+      manualOrigin = false;
       locateError = '';
       userLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-      cityMap?.setUserLocation(userLocation, { center: center && (!silent || !hasManualPan) });
+      locationAccuracy = pos.coords.accuracy;
+      locationTimestamp = pos.timestamp;
+      cityMap?.setUserLocation(userLocation, { center: center && (!silent || !hasManualPan), accuracy: locationAccuracy });
       startWatchingUserLocation();
+      void loadJourneys();
       render();
     },
     () => {
+      if (version !== locationVersion || choosingOrigin) return;
       locating = false;
       locateError = silent ? '' : 'Não foi possível usar sua localização';
       updateSortStatus();
     },
-    { enableHighAccuracy: true, timeout: 8000, maximumAge: 60_000 },
+    { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 },
   );
 }
 
@@ -514,24 +615,6 @@ locateMe.addEventListener('click', () => {
 });
 scenario.addEventListener('change', () => { void loadUnits(scenario.value); });
 retryMap.addEventListener('click', () => { void startMap(); });
-dialog.addEventListener('click', event => {
-  if ((event.target as Element).closest('.close-button')) dialog.close();
-});
-dialog.addEventListener('close', () => {
-  document.body.classList.remove('dialog-open');
-  const refocusUnitId = returnFocus && list.contains(returnFocus) ? selectedId : null;
-  if (pendingMoveRender) {
-    pendingMoveRender = false;
-    render();
-  }
-  if (returnFocus?.isConnected) {
-    returnFocus.focus();
-  } else if (refocusUnitId) {
-    list.querySelector<HTMLButtonElement>(`[data-unit="${CSS.escape(refocusUnitId)}"]`)?.focus();
-  } else {
-    search.focus();
-  }
-});
 void loadUnits();
 setSheetExpanded(false, false);
 void startMap();

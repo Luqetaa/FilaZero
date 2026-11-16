@@ -16,13 +16,17 @@ type TileMock = {
   pending: Route[];
 };
 
-export const test = base.extend<{ tiles: TileMock }>({
+type LocationOptions = { gpsPosition: { lat: number; lng: number } | null; gpsCalls: number | null; gpsFailure: number };
+export const test = base.extend<{ tiles: TileMock } & LocationOptions>({
+  gpsPosition: [null, { option: true }],
+  gpsCalls: [null, { option: true }],
+  gpsFailure: [1, { option: true }],
   tiles: async ({}, use) => {
     const tiles: TileMock = { mode: 'success', requests: [], pending: [] };
     await use(tiles);
     await Promise.allSettled(tiles.pending.map(route => route.abort()));
   },
-  context: async ({ context, tiles, baseURL }, use) => {
+  context: async ({ context, tiles, baseURL, gpsPosition, gpsCalls, gpsFailure }, use) => {
     const unexpected: string[] = [];
     const localOrigin = new URL(baseURL!).origin;
     // A fixture roda antes de criar qualquer página; a rota persiste nos reloads.
@@ -64,22 +68,27 @@ export const test = base.extend<{ tiles: TileMock }>({
       unexpected.push(request.url());
       await route.abort('blockedbyclient');
     });
-    await context.addInitScript(() => {
-      const state = window as typeof window & { __e2eGeolocationCalls: number };
+    await context.addInitScript(({ position, failure }) => {
+      const state = window as typeof window & { __e2eGeolocationCalls: number; __e2eWatchSuccess?: PositionCallback };
       state.__e2eGeolocationCalls = 0;
       const deny = (_success: PositionCallback, error?: PositionErrorCallback) => {
         state.__e2eGeolocationCalls++;
-        error?.({ code: 1, message: 'Geolocalização bloqueada no teste', PERMISSION_DENIED: 1, POSITION_UNAVAILABLE: 2, TIMEOUT: 3 });
-        return 0;
+        if (position) _success({ coords: { latitude: position.lat, longitude: position.lng, accuracy: 15, altitude: null, altitudeAccuracy: null, heading: null, speed: null }, timestamp: Date.now() } as GeolocationPosition);
+        else error?.({ code: failure, message: 'Falha de geolocalização simulada', PERMISSION_DENIED: 1, POSITION_UNAVAILABLE: 2, TIMEOUT: 3 });
+        return 1;
       };
-      Object.defineProperty(navigator.geolocation, 'getCurrentPosition', { value: deny });
-      Object.defineProperty(navigator.geolocation, 'watchPosition', { value: deny });
-    });
+      Object.defineProperty(navigator.geolocation, 'getCurrentPosition', { value: deny, configurable: true });
+      Object.defineProperty(navigator.geolocation, 'watchPosition', { value: (success: PositionCallback, error?: PositionErrorCallback) => {
+        state.__e2eWatchSuccess = success;
+        return deny(success, error);
+      }, configurable: true });
+    }, { position: gpsPosition, failure: gpsFailure });
     await use(context);
     expect(unexpected, 'Nenhuma API, CDN ou provedor externo além dos tiles simulados').toEqual([]);
     for (const page of context.pages()) {
       const calls = await page.evaluate(() => (window as typeof window & { __e2eGeolocationCalls: number }).__e2eGeolocationCalls);
-      expect(calls, 'Nenhuma tentativa de geolocalização').toBe(0);
+      const expected = gpsCalls ?? (new URL(page.url()).pathname === '/simulador.html' ? 0 : gpsPosition ? 2 : 1);
+      expect(calls, 'Solicitações de localização somente conforme o fluxo testado').toBe(expected);
     }
   },
 });

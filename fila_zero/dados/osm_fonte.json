@@ -1,0 +1,81 @@
+{
+  "fonte": "OpenStreetMap contributors",
+  "licenca": "ODbL 1.0",
+  "licenca_url": "https://opendatacommons.org/licenses/odbl/1-0/",
+  "atribuicao_url": "https://www.openstreetmap.org/copyright",
+  "endpoint": "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+  "bbox": [
+    -23.755,
+    -46.805,
+    -23.42,
+    -46.39
+  ],
+  "timestamp_osm_base": "2026-11-15T22:30:28Z",
+  "sha256_json_descompactado": "03a9b282617b66d1a2082e2e28b09f9e9c80acb948b1cb48e56798a7cdbbaa8a",
+  "observacao": "União de recortes viários públicos do OSM, por classe e por área. Não é uma exportação integral do município. Geometria, IDs e topologia originais preservados; objetos não viários e metadados de usuários editores excluídos nos extratos XML. Sem trânsito ao vivo.",
+  "consultas": [
+    "[out:json][timeout:90];way[highway~\"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street|service)$\"](-23.60,-46.73,-23.49,-46.55);out body;>;out skel qt;",
+    "[out:json][timeout:45];way[\"highway\"=\"residential\"](-23.755,-46.805,-23.42,-46.39);out body;>;out skel qt;",
+    "[out:json][timeout:60];way[\"highway\"=\"secondary\"](-23.755,-46.805,-23.42,-46.39);out body;>;out skel qt;",
+    "[out:json][timeout:60];way[\"highway\"=\"tertiary\"](-23.755,-46.805,-23.42,-46.39);out body;>;out skel qt;",
+    "[out:json][timeout:60];way[\"highway\"=\"motorway\"](-23.755,-46.805,-23.42,-46.39);out body;>;out skel qt;",
+    "[out:json][timeout:60];way[\"highway\"=\"motorway_link\"](-23.755,-46.805,-23.42,-46.39);out body;>;out skel qt;",
+    "[out:json][timeout:60];way[\"highway\"=\"trunk\"](-23.755,-46.805,-23.42,-46.39);out body;>;out skel qt;",
+    "[out:json][timeout:60];way[\"highway\"=\"trunk_link\"](-23.755,-46.805,-23.42,-46.39);out body;>;out skel qt;",
+    "[out:json][timeout:60];way[\"highway\"=\"living_street\"](-23.755,-46.805,-23.42,-46.39);out body;>;out skel qt;"
+  ],
+  "extratos_api": [
+    {
+      "url": "https://api.openstreetmap.org/api/0.6/map?bbox=-46.634,-23.488,-46.628,-23.482",
+      "obtido_em": "2026-11-15T23:14:59.152941+00:00"
+    },
+    {
+      "url": "https://api.openstreetmap.org/api/0.6/map?bbox=-46.696,-23.734,-46.686,-23.724",
+      "obtido_em": "2026-11-15T23:15:38.309074+00:00"
+    },
+    {
+      "url": "https://api.openstreetmap.org/api/0.6/map?bbox=-46.469,-23.549,-46.459,-23.539",
+      "obtido_em": "2026-11-15T23:15:41.064153+00:00"
+    },
+    {
+      "url": "https://api.openstreetmap.org/api/0.6/map?bbox=-46.693999999999996,-23.728,-46.686,-23.72",
+      "obtido_em": "2026-11-15T23:20:37.587400+00:00"
+    },
+    {
+      "url": "https://api.openstreetmap.org/api/0.6/map?bbox=-46.686,-23.724,-46.678000000000004,-23.715999999999998",
+      "obtido_em": "2026-11-15T23:20:40.457497+00:00"
+    },
+    {
+      "url": "https://api.openstreetmap.org/api/0.6/map?bbox=-46.678,-23.720000000000002,-46.67,-23.712",
+      "obtido_em": "2026-11-15T23:20:42.489528+00:00"
+    },
+    {
+      "url": "https://api.openstreetmap.org/api/0.6/map?bbox=-46.669999999999995,-23.716,-46.662,-23.708",
+      "obtido_em": "2026-11-15T23:20:43.924622+00:00"
+    },
+    {
+      "url": "https://api.openstreetmap.org/api/0.6/map?bbox=-46.708,-23.734,-46.700,-23.726",
+      "obtido_em": "2026-11-15T23:22:48.872077+00:00"
+    },
+    {
+      "url": "https://api.openstreetmap.org/api/0.6/map?bbox=-46.708,-23.725,-46.700,-23.717",
+      "obtido_em": "2026-11-15T23:22:51.858634+00:00"
+    },
+    {
+      "url": "https://api.openstreetmap.org/api/0.6/map?bbox=-46.708,-23.716,-46.700,-23.708",
+      "obtido_em": "2026-11-15T23:22:54.866052+00:00"
+    },
+    {
+      "url": "https://api.openstreetmap.org/api/0.6/map?bbox=-46.708,-23.707,-46.700,-23.698999999999998",
+      "obtido_em": "2026-11-15T23:22:57.670887+00:00"
+    },
+    {
+      "url": "https://api.openstreetmap.org/api/0.6/map?bbox=-46.701,-23.697000000000003,-46.693000000000005,-23.689",
+      "obtido_em": "2026-11-15T23:28:03.522084+00:00"
+    },
+    {
+      "url": "https://api.openstreetmap.org/api/0.6/map?bbox=-46.699,-23.688000000000002,-46.691,-23.68",
+      "obtido_em": "2026-11-15T23:28:05.724225+00:00"
+    }
+  ]
+}

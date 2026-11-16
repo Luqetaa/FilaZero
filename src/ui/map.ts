@@ -17,22 +17,32 @@ export interface MapPoint {
   tone: string;
   statusText: string;
   label: string;
+  opensDialog?: boolean;
+}
+export interface SimulationNetwork {
+  pontos: { id: string; nome: string; lat: number; lng: number }[];
+  ruas: { id: string; nome: string; geometria: [number, number][] }[];
+  bloqueadas: string[];
+  origem: string;
+  caminho: [number, number][];
 }
 export interface CityMap {
   update(points: MapPoint[], selectedId: string | null): void;
   select(id: string | null): void;
   retry(): void;
   getCenter(): { lat: number; lng: number };
-  setUserLocation(location: { lat: number; lng: number } | null, options?: { center?: boolean }): void;
+  setUserLocation(location: { lat: number; lng: number } | null, options?: { center?: boolean; manual?: boolean; accuracy?: number | null }): void;
+  setSimulation(network: SimulationNetwork, fit?: boolean): void;
 }
 
 export function initMap(
   container: HTMLElement,
-  reference: { center: { lat: number; lng: number }; zoom: number },
+  reference: { center: { lat: number; lng: number }; zoom: number; overlayControls?: boolean; name?: string },
   onStatus: (status: MapStatus) => void,
   onSelect: (id: string, trigger: HTMLButtonElement) => void,
   onMove?: (center: { lat: number; lng: number }) => void,
   onUserPan?: () => void,
+  onMapClick?: (location: { lat: number; lng: number }) => void,
 ): CityMap {
   const map = L.map(container, {
     attributionControl: false,
@@ -49,20 +59,31 @@ export function initMap(
   let timeout: ReturnType<typeof setTimeout> | undefined;
   let attempt = 0;
   let userMarker: L.Marker | null = null;
+  let accuracyCircle: L.Circle | null = null;
+  const simulationLayer = L.layerGroup().addTo(map);
   const markers = new Map<string, { marker: L.Marker; button: HTMLButtonElement }>();
 
   function centerAt(location: { lat: number; lng: number }, zoom = map.getZoom()) {
     map.setView([location.lat, location.lng], zoom, { animate: false });
-    if (container.clientWidth > 900) {
+    if (reference.overlayControls !== false && container.clientWidth > 900) {
       map.panBy([-Math.min(200, Math.round(container.clientWidth * 0.14)), -30], { animate: false });
     }
   }
 
-  function setUserLocation(location: { lat: number; lng: number } | null, options?: { center?: boolean }) {
+  function setUserLocation(location: { lat: number; lng: number } | null, options?: { center?: boolean; manual?: boolean; accuracy?: number | null }) {
     if (!location) {
       userMarker?.remove();
       userMarker = null;
+      accuracyCircle?.remove();
+      accuracyCircle = null;
       return;
+    }
+    if (options?.manual) {
+      accuracyCircle?.remove();
+      accuracyCircle = null;
+    } else if (options?.accuracy != null && Number.isFinite(options.accuracy) && options.accuracy > 0) {
+      if (!accuracyCircle) accuracyCircle = L.circle([location.lat, location.lng], { radius: options.accuracy, color: '#1355ff', weight: 1, fillOpacity: 0.1, interactive: false, className: 'location-accuracy' }).addTo(map);
+      else accuracyCircle.setLatLng([location.lat, location.lng]).setRadius(options.accuracy);
     }
     if (!userMarker) {
       const markerEl = document.createElement('div');
@@ -84,6 +105,7 @@ export function initMap(
     } else {
       userMarker.setLatLng([location.lat, location.lng]);
     }
+    userMarker.getElement()?.querySelector('.user-location-marker')?.setAttribute('aria-label', options?.manual ? 'Origem escolhida no mapa' : 'Sua localização atual');
     if (options?.center) {
       centerAt(location, Math.max(map.getZoom(), 13));
     }
@@ -92,6 +114,7 @@ export function initMap(
   function ensureMarkerVisible(marker: L.Marker) {
     const size = map.getSize();
     if (!size.x || !size.y) return;
+    if (reference.overlayControls === false) return;
     const desktop = size.x > 900;
     const left = desktop ? 420 : 28;
     const top = desktop ? 116 : 150;
@@ -191,13 +214,14 @@ export function initMap(
     L.control.zoom({ position: 'topright', zoomInTitle: 'Aumentar zoom', zoomOutTitle: 'Diminuir zoom' }).addTo(map);
     const pane = map.getPane('markerPane')!;
     pane.setAttribute('role', 'group');
-    pane.setAttribute('aria-label', 'Unidades de saúde no mapa de São Paulo');
+    pane.setAttribute('aria-label', `Unidades de saúde no mapa de ${reference.name ?? 'São Paulo'}`);
     const userPane = map.createPane('userLocationPane');
     userPane.style.zIndex = '610';
     userPane.style.pointerEvents = 'none';
     centerAt(reference.center, reference.zoom);
     retry();
     map.on('dragstart', () => onUserPan?.());
+    map.on('click', event => onMapClick?.({ lat: event.latlng.lat, lng: event.latlng.lng }));
     map.on('moveend', () => {
       const center = map.getCenter();
       onMove?.({ lat: center.lat, lng: center.lng });
@@ -210,6 +234,45 @@ export function initMap(
       getCenter() {
         const center = map.getCenter();
         return { lat: center.lat, lng: center.lng };
+      },
+      setSimulation(network, fit = false) {
+        simulationLayer.clearLayers();
+        const points = new Map(network.pontos.map(point => [point.id, point]));
+        const coordinates = (id: string): L.LatLngTuple => {
+          const point = points.get(id)!;
+          return [point.lat, point.lng];
+        };
+        for (const road of network.ruas.filter(road => network.bloqueadas.includes(road.id))) {
+          const line = L.polyline(road.geometria, {
+            color: '#a52b39', weight: 4, opacity: 1, dashArray: '5 7',
+            className: 'simulation-road is-blocked',
+          }).addTo(simulationLayer);
+          const label = document.createElement('span');
+          label.textContent = `${road.nome} · trecho OSM ${road.id} · bloqueio simulado`;
+          line.bindTooltip(label);
+        }
+        for (const point of network.pontos.filter(point => point.id === network.origem)) {
+          const origin = point.id === network.origem;
+          L.circleMarker(coordinates(point.id), {
+            radius: origin ? 9 : 4, color: origin ? '#0A3CFF' : '#536479',
+            fillColor: origin ? '#0A3CFF' : '#fff', fillOpacity: 1, weight: origin ? 3 : 2,
+          }).addTo(simulationLayer);
+        }
+        const route = network.caminho;
+        if (route.length > 1) {
+          L.polyline(route, { color: '#fff', weight: 10, interactive: false }).addTo(simulationLayer);
+          L.polyline(route, {
+            color: '#0A3CFF', weight: 6, opacity: 1, interactive: false, className: 'simulation-route',
+          }).addTo(simulationLayer);
+        }
+        if (fit) {
+          const bounds = route.length > 1 ? route : network.pontos.map(point => coordinates(point.id));
+          const desktop = container.clientWidth > 900;
+          const padding: L.FitBoundsOptions = reference.overlayControls === false
+            ? { padding: [52, 84] }
+            : { paddingTopLeft: [desktop ? 460 : 64, desktop ? 170 : 190], paddingBottomRight: [84, desktop ? 120 : 180] };
+          if (bounds.length) map.fitBounds(L.latLngBounds(bounds), { ...padding, maxZoom: 14, animate: false });
+        }
       },
       update(points, selectedId) {
         const visibleIds = new Set(points.map(point => point.id));
@@ -225,7 +288,6 @@ export function initMap(
             const button = document.createElement('button');
             button.type = 'button';
             button.dataset.unit = point.id;
-            button.setAttribute('aria-haspopup', 'dialog');
             button.innerHTML = '<span class="marker-pill"><i class="dot"></i><span class="marker-number"></span><span class="marker-type sr-only"></span><span class="marker-sep" aria-hidden="true">·</span><span class="marker-status-text"></span></span>';
             L.DomEvent.disableClickPropagation(button);
             L.DomEvent.on(button, 'keydown keyup', L.DomEvent.stopPropagation);
@@ -242,6 +304,8 @@ export function initMap(
           marker.setLatLng([point.location.lat, point.location.lng]);
           button.className = `map-marker ${point.tone}`;
           button.setAttribute('aria-label', point.label);
+          if (point.opensDialog) button.setAttribute('aria-haspopup', 'dialog');
+          else button.removeAttribute('aria-haspopup');
           button.querySelector('.marker-number')!.textContent = point.number;
           button.querySelector('.marker-type')!.textContent = point.type;
           button.querySelector('.dot')!.className = `dot ${point.tone}`;

@@ -2,6 +2,25 @@
 
 MVP web responsivo em **glassmorphism** para localizar UBS, UPAs e hospitais públicos de São Paulo em mapa e lista, exibindo nível de fila e tempo estimado de espera.
 
+## Trajetos reais com Dijkstra em Python
+
+O mapa principal e a tela **Simular trajetos** usam uma extração real de ruas do OpenStreetMap, processada pelo Dijkstra com `heapq` em Python. Usa a localização do navegador e calcula trajetos para as **30 unidades do mesmo catálogo do mapa** (10 UBS, 10 UPAs e 10 hospitais), somando deslocamento e espera quando houver estimativa disponível. O percurso desenhado usa os nós originais das ruas, respeitando sentidos e permissões de acesso por carro.
+
+Para executar o site completo com a API, na raiz do projeto:
+
+```sh
+npm.cmd run build
+python -m fila_zero.servidor
+```
+
+Abra `http://127.0.0.1:8000/` e autorize a localização no navegador. O botão **Usar minha localização** permite tentar novamente. A comparação também está em `http://127.0.0.1:8000/simulador.html`. O mesmo servidor disponibiliza o catálogo em `/`. Em desenvolvimento, mantenha esse Python aberto e execute `npm.cmd run dev` em outro terminal; o Vite encaminha `/api` para a porta 8000.
+
+O cadastro em `fila_zero/dados/unidades.json` é compartilhado pelo TypeScript e pelo Python. A posição é enviada no corpo do pedido à API local e não é salva pelo aplicativo. Permissão negada e origem fora da cobertura geram mensagens claras; não há fallback automático para a Sé.
+
+A cópia OSM incluída cobre parte de São Paulo e funciona offline para calcular rotas; somente o fundo cartográfico necessita de internet. O tempo de carro usa a extensão dos trechos e velocidades de referência, sem trânsito ao vivo. O modelo não interpreta restrições de conversão ou regras condicionais e termina no acesso viário próximo da unidade.
+
+Consulte [a documentação das rotas OSM](docs/ROTAS_OSM.md), [a ficha e o guia Python](fila_zero/README.md) e [os prompts usados](prompts.md). O exemplo de terminal `python -m fila_zero` continua disponível como exercício didático separado, com dados sintéticos; ele não fornece os dados da tela web.
+
 ## Executar localmente
 
 Requer Node.js 22.18+ e npm. No diretório do projeto:
@@ -35,7 +54,7 @@ O histórico de validação e os retestes estão em `docs/REVIEW.md`. A versão 
 
 ## Arquitetura e dados
 
-TypeScript, Vite, HTML semântico, CSS e Leaflet 1.9.4. Não há API própria, banco, autenticação, dados de pacientes, geolocalização ou infraestrutura de produção. Apenas os tiles do mapa de ruas são obtidos de um serviço externo.
+TypeScript, Vite, HTML semântico, CSS e Leaflet 1.9.4. O catálogo é estático. A tela de trajetos usa a API Python local em `fila_zero/servidor.py`; não há banco, autenticação ou dados de pacientes. A malha OSM é local; o fundo do mapa vem de um serviço externo.
 
 - `src/types.ts`: contrato das unidades e dos estados dos dados.
 - `src/data/units.ts`: catálogo de 30 unidades reais em São Paulo (10 UBS, 10 UPA e 10 Hospitais), consulta, busca e apresentação dos dados.
@@ -65,6 +84,6 @@ A prioridade clínica e a unidade adequada dependem da avaliação da equipe de 
 
 ## Limites desta versão
 
-Sem integração com unidades, estimativas reais, cálculo de deslocamento, previsão, pré-check-in, painel administrativo ou autenticação. Acessibilidade é verificada por testes e inspeção, sem alegar certificação WCAG ou substituir avaliação com usuários e tecnologias assistivas reais.
+Sem integração operacional com unidades, esperas reais, trânsito ao vivo, previsão, pré-check-in, painel administrativo ou autenticação. O cálculo de deslocamento está disponível na tela de trajetos, dentro da área da extração OSM. Acessibilidade é verificada por testes e inspeção, sem alegar certificação WCAG ou substituir avaliação com usuários e tecnologias assistivas reais.
 
 Os documentos originais de visão e identidade recebidos foram preservados na raiz do projeto.

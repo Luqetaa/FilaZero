@@ -5,6 +5,8 @@ export default defineConfig({
   outputDir: './tests/e2e/.artifacts',
   workers: 1,
   retries: 0,
+  timeout: 60_000,
+  expect: { timeout: 15_000 },
   reporter: 'list',
   use: {
     baseURL: 'http://127.0.0.1:5173',
@@ -29,10 +31,18 @@ export default defineConfig({
       },
     },
   ],
-  webServer: {
-    command: 'npm.cmd run dev -- --port 5173',
-    url: 'http://127.0.0.1:5173',
-    reuseExistingServer: true,
-    timeout: 30_000,
-  },
+  webServer: [
+    {
+      command: 'npm.cmd run dev -- --port 5173',
+      url: 'http://127.0.0.1:5173',
+      reuseExistingServer: true,
+      timeout: 30_000,
+    },
+    {
+      command: 'python -m fila_zero.servidor',
+      url: 'http://127.0.0.1:8000/api/cenario',
+      reuseExistingServer: true,
+      timeout: 60_000,
+    },
+  ],
 });

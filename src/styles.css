@@ -157,6 +157,15 @@ input::placeholder { color: #5b6472; }
 
 .filters { margin: 0; padding: 0; border: 0; min-width: 0; pointer-events: none; }
 .filters > div { display: flex; flex-wrap: wrap; gap: 8px; pointer-events: none; }
+.simulation-entry { pointer-events: auto; border-radius: 999px; color: #0735ce; background: #fff; border-color: #bac8ff; }
+.route-api-status { padding: 8px 20px; font-size: .7rem; line-height: 1.5; color: #46546a; }
+.origin-controls { padding: 0 20px; font-size: .75rem; color: #46546a; }
+.origin-controls button { min-height: 44px; border: 0; background: transparent; padding: 8px 10px 8px 0; color: #0735ce; text-decoration: underline; }
+.origin-hint { position: fixed; top: calc(var(--header-height) + 12px); right: 16px; z-index: 29; max-width: 280px; padding: 10px 14px; border-radius: 10px; background: white; color: #0b0b0d; box-shadow: 0 3px 14px #0003; font-size: .8rem; pointer-events: none; }
+.origin-hint:empty { display: none; }
+.route-api-status button { min-height: 44px; background: none; border: 0; padding: 8px 0; color: #0735ce; text-decoration: underline; }
+button.route-link { min-height: 44px; border: 0; background: transparent; font: inherit; font-size: .75rem; color: #0735ce; cursor: pointer; }
+button.route-link:disabled { color: #5b6472; cursor: default; }
 .filters button {
   pointer-events: auto;
   display: inline-flex;
@@ -308,6 +317,7 @@ input::placeholder { color: #5b6472; }
   transition: border-color 160ms var(--ease-out), box-shadow 160ms var(--ease-out), background 160ms var(--ease-out), transform 160ms var(--ease-out);
 }
 .unit-card:last-child { margin-bottom: 0; }
+.inline-unit-info { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: .8rem; }
 .unit-card.is-selected {
   border-color: var(--blue);
   background: linear-gradient(155deg, rgba(242, 246, 255, 0.96), rgba(235, 242, 255, 0.88));

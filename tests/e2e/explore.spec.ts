@@ -69,17 +69,6 @@ async function expectSafety(root: Page | Locator, inDialog = false) {
   if (inDialog) await expect(root.getByText('Ligue para o SAMU 192 ou procure o pronto-socorro mais próximo.', { exact: true })).toBeVisible();
 }
 
-async function tabTo(page: Page, key: 'Tab' | 'Shift+Tab', target: Locator) {
-  for (let step = 0; step < 3; step++) {
-    await page.keyboard.press(key);
-    if (await target.evaluate(element => document.activeElement === element)) break;
-    const allowed = await page.evaluate(() => !document.hasFocus()
-      || document.activeElement === document.querySelector('dialog'));
-    expect(allowed, 'Tab não pode focar o fundo nem pular outro controle').toBe(true);
-  }
-  await expect(target).toBeFocused();
-}
-
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('#result-count')).toHaveText('30 unidades encontradas');
@@ -121,9 +110,8 @@ test('cenário inicial exibe unidades reais com filas simuladas para demonstraç
   await page.clock.fastForward(3000);
   await expect(page.locator('#result-count')).toHaveText('30 unidades encontradas');
   await details(page, names[17]).click();
-  const dialog = page.getByRole('dialog', { name: names[17], exact: true });
-  await expectSafety(dialog, true);
-  await page.keyboard.press('Escape');
+  await expect(card(page, names[17]).locator('.inline-unit-info')).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(notice).toBeVisible();
   expect(errors).toEqual([]);
   expect(external).toEqual([]);
@@ -158,35 +146,26 @@ test('busca normaliza texto e combina tipos sem deixar marcadores residuais', as
   await expectResults(page, names);
 });
 
-test('unidades abrem os mesmos dados pela lista e pelo mapa', async ({ page }) => {
+test('seleção pela lista e pelo mapa mostra detalhes no cartão', async ({ page }) => {
   for (const name of [names[0], names[17], names[29]]) {
     await openList(page);
     const item = card(page, name);
-    const expectedAddress = await item.locator('.address').innerText();
-    const expectedWait = await item.locator('.wait').innerText();
-    await expect(item).toContainText('Cadastro SMS-SP / SES-SP');
     await details(page, name).click();
-    const dialog = page.getByRole('dialog', { name, exact: true });
-    await expect(dialog).toBeVisible();
-    await expect(dialog.locator('.dialog-wait')).toHaveText(expectedWait);
-    await expect(dialog.locator('dd').first()).toHaveText(expectedAddress, { useInnerText: true });
-    await expectSafety(dialog, true);
-    await page.keyboard.press('Escape');
-    await expect(dialog).not.toBeVisible();
-    await expect(details(page, name)).toBeFocused();
-    await expect(marker(page, name)).toHaveAttribute('aria-pressed', 'true');
+    await expect(item.locator('.inline-unit-info')).toBeVisible();
+    await expect(details(page, name)).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await details(page, name).click();
+    await expect(item.locator('.inline-unit-info')).toBeHidden();
     await closeList(page);
     await marker(page, name).click();
-    await expect(dialog).toBeVisible();
-    await expect(dialog.locator('.dialog-wait')).toHaveText(expectedWait);
-    await expect(dialog.locator('dd').first()).toHaveText(expectedAddress, { useInnerText: true });
-    await dialog.getByRole('button', { name: 'Fechar detalhes' }).click();
-    await expect(marker(page, name)).toBeFocused();
+    await openList(page);
+    await expect(item.locator('.inline-unit-info')).toBeVisible();
+    await expect(marker(page, name)).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
   }
   await search(page).fill('tatuape');
   await expectResults(page, [names[5]]);
   await expect(map(page).getByRole('button', { pressed: true })).toHaveCount(0);
-  await expect(page.locator('.unit-card.is-selected')).toHaveCount(0);
 });
 
 test('filas simuladas e ausência de dados exibem status explícito sem converter lacunas em zero', async ({ page }) => {
@@ -214,36 +193,22 @@ test('filas simuladas e ausência de dados exibem status explícito sem converte
     await expect(item.locator('.queue-badge')).toHaveText(state.badge);
     await expect(marker(page, state.name)).toHaveAttribute('aria-label', state.aria);
     await details(page, state.name).click();
-    const dialog = page.getByRole('dialog', { name: state.name });
-    await expect(dialog.locator('.dialog-wait')).toHaveText(state.wait);
-    await expect(dialog).toContainText(state.badge);
-    await page.keyboard.press('Escape');
+    await expect(item.locator('.inline-unit-info')).toBeVisible();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
   }
 });
 
-test('teclado contém foco no diálogo e restaura cada acionador', async ({ page }) => {
-  for (const [trigger, key] of [[details(page, names[17]), 'Enter'], [marker(page, names[17]), 'Space']] as const) {
-    if (key === 'Space') await closeList(page);
-    else await openList(page);
-    await trigger.focus();
-    await expect(trigger).toBeFocused();
-    await expect(trigger).toHaveCSS('outline-style', 'solid');
-    await trigger.press(key);
-    const dialog = page.getByRole('dialog', { name: names[17] });
-    const close = dialog.getByRole('button', { name: 'Fechar detalhes' });
-    await expect(close).toBeFocused();
-    const official = dialog.getByRole('link', { name: /Orientação oficial/ });
-    await tabTo(page, 'Shift+Tab', official);
-    await tabTo(page, 'Tab', close);
-    await tabTo(page, 'Tab', dialog.getByRole('link', { name: /SAMU 192/ }));
-    await tabTo(page, 'Tab', official);
-    await tabTo(page, 'Tab', close);
-    await search(page).focus();
-    await expect(close).toBeFocused();
-    await page.keyboard.press('Escape');
-    await expect(dialog).not.toBeVisible();
-    await expect(trigger).toBeFocused();
-  }
+test('detalhes podem ser abertos e fechados pelo teclado', async ({ page }) => {
+  const trigger = details(page, names[17]);
+  await page.keyboard.press('Tab');
+  await trigger.focus();
+  await trigger.press('Enter');
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+  await expect(card(page, names[17]).locator('.inline-unit-info')).toBeVisible();
+  await expect(trigger).toBeFocused();
+  await trigger.press('Enter');
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
 test('falha simulada preserva segurança e repetir recupera sem perder filtros', async ({ page }) => {
@@ -261,7 +226,7 @@ test('falha simulada preserva segurança e repetir recupera sem perder filtros',
   await expect(scenario(page)).toHaveValue('normal');
   await expect(page.getByRole('button', { name: 'UBS', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await details(page, names[17]).click();
-  await expect(page.getByRole('dialog', { name: names[17] })).toBeVisible();
+  await expect(card(page, names[17]).locator('.inline-unit-info')).toBeVisible();
 });
 
 test('carga lenta é observável e leitura antiga não sobrescreve falha ou recuperação', async ({ page }) => {
@@ -316,11 +281,10 @@ test('layout preserva leitura, toque e movimento reduzido', async ({ page, isMob
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await expect(search(page)).toBeVisible();
     await details(page, names[17]).click();
-    const dialog = page.getByRole('dialog', { name: names[17] });
-    await expectSafety(dialog);
-    expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
-    await expect(dialog.getByRole('button', { name: 'Fechar detalhes' })).toHaveCSS('transition-duration', '0s');
-    await page.keyboard.press('Escape');
+    const info = card(page, names[17]).locator('.inline-unit-info');
+    await expect(info).toBeVisible();
+    expect(await info.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await details(page, names[17]).click();
   }
   await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

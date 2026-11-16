@@ -1,0 +1,21 @@
+{
+  "referencia": "2026-11-15T14:00:00-03:00",
+  "origem_padrao": "3713156708",
+  "origens": [
+    {
+      "no": "3713156708",
+      "nome": "Rua Irmã Simpliciana · Sé"
+    },
+    {
+      "no": "9025376418",
+      "nome": "Praça da República"
+    },
+    {
+      "no": "741703013",
+      "nome": "Avenida Paulista · região do MASP"
+    }
+  ],
+  "fonte_unidades": "https://prefeitura.sp.gov.br/web/saude/w/em-caso-de-urg%C3%AAncia-m%C3%A9dica-procure-uma-das-34-upas-da-capital",
+  "fonte_coordenadas": "Catálogo local src/data/units.ts; posições do acesso viário ajustadas aos nós do OpenStreetMap.",
+  "catalogo": "unidades.json — cadastro compartilhado com src/data/units.ts"
+}
