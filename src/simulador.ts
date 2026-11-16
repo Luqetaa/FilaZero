@@ -170,7 +170,7 @@ async function refresh(loadScenario = false) {
   const version = ++requestVersion;
   controller?.abort();
   const currentController = controller = new AbortController();
-  const timeout = setTimeout(() => currentController.abort(), 45_000);
+  const timeout = setTimeout(() => currentController.abort(), 120_000);
   comparison = null;
   resultList.innerHTML = '';
   resultList.setAttribute('aria-busy', 'true');

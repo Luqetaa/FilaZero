@@ -1,4 +1,5 @@
 from http import HTTPStatus
+from http.server import ThreadingHTTPServer
 import json
 from pathlib import Path
 import tempfile
@@ -11,6 +12,8 @@ from urllib.request import Request, urlopen
 from fila_zero.algoritmos import dijkstra
 from fila_zero.rotas import calcular_comparacao, carregar_cenario_viario
 from fila_zero.servidor import criar_servidor
+from api.comparar import handler as vercel_comparar
+from api.cenario import handler as vercel_cenario
 
 
 class TestIntegracaoWeb(unittest.TestCase):
@@ -98,6 +101,27 @@ class TestIntegracaoWeb(unittest.TestCase):
         self.assertEqual(len(resposta["resultados"]), 30)
         self.assertIn(resposta["origem"], self.cenario.rede.grafo)
         self.assertLess(resposta["acesso_origem_metros"], 200)
+
+    def test_handlers_vercel_retornam_cenario_e_rotas(self):
+        for handler, caminho, dados in [
+            (vercel_cenario, '/api/cenario', None),
+            (vercel_comparar, '/api/comparar', {"origem": {"lat": -23.5501, "lng": -46.6329}}),
+        ]:
+            with self.subTest(caminho=caminho), ThreadingHTTPServer(('127.0.0.1', 0), handler) as servidor:
+                thread = Thread(target=servidor.serve_forever, daemon=True)
+                thread.start()
+                try:
+                    pedido = Request(f'http://127.0.0.1:{servidor.server_port}{caminho}', data=json.dumps(dados).encode() if dados is not None else None, headers={"Content-Type": "application/json"})
+                    with urlopen(pedido, timeout=30) as resposta:
+                        resultado = json.load(resposta)
+                    if dados is None:
+                        self.assertTrue(resultado['viario_real'])
+                    else:
+                        self.assertEqual(len(resultado['resultados']), 30)
+                        self.assertTrue(all(unidade['geometria'] for unidade in resultado['resultados']))
+                finally:
+                    servidor.shutdown()
+                    thread.join(timeout=3)
 
     def test_gps_invalido_ou_fora_da_cobertura_nao_usa_origem_padrao(self):
         for origem in [{"lat": 0, "lng": 0}, {"lat": True, "lng": -46.6}, {"lat": float('nan'), "lng": -46.6}, {"lat": 91, "lng": 0}, {"lat": -23.5}, {"lat": "-23.5", "lng": -46.6}]:

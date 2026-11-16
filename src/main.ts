@@ -178,7 +178,7 @@ async function loadJourneys() {
   const version = ++journeyVersion;
   journeyController?.abort();
   const controller = journeyController = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 45_000);
+  const timeout = setTimeout(() => controller.abort(), 75_000);
   journeyState = 'loading'; routeComparison = null; journeys = new Map();
   drawJourney(); render();
   try {
@@ -454,7 +454,7 @@ function render() {
   const routeStatus = document.querySelector('#route-api-status')!;
   routeStatus.innerHTML = journeyState === 'loading' ? 'Calculando os trajetos das 30 unidades com sua localização…'
     : journeyState === 'error' ? `${escapeHtml(journeyError)} <button type="button" id="retry-journeys">Recalcular trajetos</button>`
-    : journeyState === 'ready' ? `Trajetos calculados: ${[...journeys.values()].filter(u => u.deslocamento !== null).length} de ${units.length} unidades. Carro sem trânsito ao vivo · esperas simuladas.${locationAccuracy !== null ? ` Precisão da localização: ~${Math.round(locationAccuracy)} m.${locationAccuracy > 200 ? ' Localização aproximada: corrija no mapa se necessário.' : ''}` : ''} Localização usada apenas no cálculo local.`
+    : journeyState === 'ready' ? `Trajetos calculados: ${[...journeys.values()].filter(u => u.deslocamento !== null).length} de ${units.length} unidades. Carro sem trânsito ao vivo · esperas simuladas.${locationAccuracy !== null ? ` Precisão da localização: ~${Math.round(locationAccuracy)} m.${locationAccuracy > 200 ? ' Localização aproximada: corrija no mapa se necessário.' : ''}` : ''} Localização enviada ao serviço de trajetos e não salva pelo aplicativo.`
     : 'Use sua localização para calcular trajetos por ruas reais. A localização não é salva pelo aplicativo.';
   if (status !== 'ready') {
     const loading = status === 'loading';

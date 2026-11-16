@@ -17,6 +17,10 @@ Abra `http://127.0.0.1:8000/` e autorize a localização no navegador. O botão 
 
 O cadastro em `fila_zero/dados/unidades.json` é compartilhado pelo TypeScript e pelo Python. A posição é enviada no corpo do pedido à API local e não é salva pelo aplicativo. Permissão negada e origem fora da cobertura geram mensagens claras; não há fallback automático para a Sé.
 
+### Publicação na Vercel
+
+A pasta `api/` disponibiliza o mesmo cálculo Python como Vercel Functions, e `vercel.json` inclui os dados de ruas na publicação. Publique o projeto inteiro (incluindo `api/`, `fila_zero/` e `vercel.json`), usando o build Vite `npm run build` e a saída `dist`. Após o deploy, `/api/cenario` deve retornar JSON com `viario_real: true`. O primeiro cálculo pode demorar enquanto a função carrega a malha OSM. A localização é enviada à função hospedada na Vercel para calcular as rotas; o aplicativo não a salva.
+
 A cópia OSM incluída cobre parte de São Paulo e funciona offline para calcular rotas; somente o fundo cartográfico necessita de internet. O tempo de carro usa a extensão dos trechos e velocidades de referência, sem trânsito ao vivo. O modelo não interpreta restrições de conversão ou regras condicionais e termina no acesso viário próximo da unidade.
 
 Consulte [a documentação das rotas OSM](docs/ROTAS_OSM.md), [a ficha e o guia Python](fila_zero/README.md) e [os prompts usados](prompts.md). O exemplo de terminal `python -m fila_zero` continua disponível como exercício didático separado, com dados sintéticos; ele não fornece os dados da tela web.
