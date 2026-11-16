@@ -1,6 +1,7 @@
 import { expect, type Route } from '@playwright/test';
 import { test } from './fixtures';
-import { openList } from './ui-helpers';
+import { openList, openSettings } from './ui-helpers';
+import { formatTotalDurationRange } from '../../src/data/units';
 
 test.describe('localização autorizada', () => {
   test.use({ gpsPosition: { lat: -23.5501, lng: -46.6329 } });
@@ -18,6 +19,23 @@ test.describe('localização autorizada', () => {
     await expect(page.locator('#route-api-status')).toContainText('30 de 30 unidades');
   });
 
+  test('resumo móvel mostra o total de espera e trajeto quando o cálculo termina', async ({ page }) => {
+    let pending: Route | undefined;
+    await page.route('**/api/comparar', route => { pending = route; });
+    await page.goto('/');
+    await expect.poll(() => !!pending).toBe(true);
+    await page.locator('#city-map [data-unit="upa-lapa"]').dispatchEvent('click');
+    await expect(page.locator('#selected-summary-name')).toHaveText('UPA Lapa (Prof. João Catarin Mezomo)');
+    await expect(page.locator('#selected-summary-wait')).toHaveText('Calculando tempo total…');
+    const response = page.waitForResponse(r => r.url().endsWith('/api/comparar'));
+    await pending!.continue();
+    const result = await (await response).json();
+    const total = result.resultados.find((unit: { id: string }) => unit.id === 'upa-lapa').total;
+    await expect(page.locator('#selected-summary-wait')).toHaveText(`Tempo total: ${formatTotalDurationRange({ min: total[0], max: total[1] })}`);
+    await page.locator('#city-map [data-unit="ubs-jardim-edite"]').dispatchEvent('click');
+    await expect(page.locator('#selected-summary-wait')).toHaveText('Tempo total indisponível');
+  });
+
   test('remove o carregamento inicial se a API falhar', async ({ page }) => {
     let pending: Route | undefined;
     await page.route('**/api/comparar', route => { pending = route; });
@@ -26,7 +44,7 @@ test.describe('localização autorizada', () => {
     await expect.poll(() => !!pending).toBe(true);
     await pending!.fulfill({ status: 503, contentType: 'application/json', body: '{"erro":"Serviço indisponível"}' });
     await expect(page.locator('#initial-route-loading')).toBeHidden();
-    await openList(page);
+    await openSettings(page);
     await expect(page.locator('#route-api-status')).toContainText('Serviço indisponível');
     await expect(page.getByRole('button', { name: 'Recalcular trajetos' })).toBeVisible();
   });
@@ -64,7 +82,7 @@ test.describe('localização autorizada', () => {
     const available = page.locator('[data-card="upa-lapa"]');
     await expect(available.locator('.total-time')).toContainText('Total');
     await expect(page.locator('[data-card="ubs-jardim-edite"] .total-time')).toContainText('Total indisponível');
-    await available.getByRole('button', { name: 'Ver trajeto para UPA Lapa (Prof. João Catarin Mezomo)' }).click();
+    await available.getByRole('button', { name: 'Selecionar UPA Lapa (Prof. João Catarin Mezomo) no mapa' }).click();
     await expect(page.locator('#city-map .simulation-route')).toHaveCount(1);
     await expect(page.locator('#city-map .user-location-marker')).toHaveCount(1);
     const marker = await page.locator('#city-map [data-unit="upa-lapa"]').boundingBox();
@@ -81,6 +99,7 @@ test.describe('localização autorizada', () => {
     await page.goto('/');
     await openList(page);
     await expect(page.locator('#route-api-status')).toContainText('30 de 30 unidades');
+    await openSettings(page);
     await page.getByRole('button', { name: 'Corrigir localização no mapa' }).click();
     await expect(page.locator('#origin-hint')).toContainText('Clique no ponto correto');
     const response = page.waitForResponse(r => r.url().endsWith('/api/comparar') && r.request().method() === 'POST');

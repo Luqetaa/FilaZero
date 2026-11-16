@@ -17,7 +17,6 @@ import type { CityMap, MapPoint, MapStatus } from './ui/map.ts';
 import { fetchRouteJson, type Comparison, type RouteResult } from './data/routes.ts';
 
 const officialSource = 'https://www.gov.br/saude/pt-br/composicao/saes/samu-192/samu-192';
-const clinicalWarning = 'A prioridade clínica e a unidade adequada dependem da avaliação da equipe de saúde.';
 const escapeHtml = (value: string) => value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
 
 const ringCircumference = 2 * Math.PI * 13;
@@ -72,14 +71,16 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
           <h1 id="list-title">Unidades de Saúde</h1>
           <p id="result-count" role="status" aria-live="polite" aria-atomic="true">Carregando unidades…</p>
         </div>
+        <div id="selected-summary" class="selected-summary" aria-live="polite" hidden><strong id="selected-summary-name"></strong><div class="selected-summary-panel"><span id="selected-summary-ring" aria-hidden="true"></span><div class="selected-summary-metrics"><p id="selected-summary-queue" class="selected-summary-queue"></p><p id="selected-summary-wait" class="selected-summary-wait"></p></div></div></div>
+        <button id="close-search" class="close-search button" type="button" hidden>Voltar ao mapa</button>
+        <button id="settings-toggle" class="settings-toggle" type="button" aria-label="Configurações" aria-expanded="false" aria-controls="sheet-settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"/><path d="M19.4 13.5a7.8 7.8 0 0 0 0-3l1.6-1.2-1.6-2.8-1.9.6a8 8 0 0 0-2.6-1.5L14.6 3h-3.2l-.3 2.6a8 8 0 0 0-2.6 1.5l-1.9-.6L5 9.3l1.6 1.2a7.8 7.8 0 0 0 0 3L5 14.7l1.6 2.8 1.9-.6a8 8 0 0 0 2.6 1.5l.3 2.6h3.2l.3-2.6a8 8 0 0 0 2.6-1.5l1.9.6 1.6-2.8-1.6-1.2Z"/></svg></button>
       </div>
       <div id="sheet-content" class="sheet-content" tabindex="-1" role="region" aria-label="Lista de unidades de saúde">
         <div class="map-feedback"><p id="map-status" role="status" aria-live="polite">Carregando mapa de ruas… A lista pode ser consultada.</p><button id="retry-map" class="button glass-pill" type="button" hidden>Tentar carregar mapa</button></div>
         <p id="map-state" class="map-data-state" role="status" aria-live="polite"></p>
-        <div class="list-tools"><span id="sort-label">Mais próximas</span><button id="locate-me" class="locate-button" type="button" aria-pressed="false">Usar minha localização</button></div>
-        <details id="about" class="about"><summary>Sobre os dados</summary><div class="about-content"><h2>Unidades públicas de saúde em São Paulo.</h2><p>Consulte UBS, UPAs e hospitais da rede SUS em São Paulo com localização, horário de funcionamento e tempo estimado de espera no mapa e na lista.</p><p id="map-help">No mapa, use as setas para mover e +/− para ampliar ou reduzir. Selecione um marcador ou abra os detalhes na lista.</p><label for="scenario">Simular estado de carregamento</label><select id="scenario"><option value="normal">Carregamento normal</option><option value="error">Falha simulada (repetir recupera)</option><option value="slow">Carregamento lento (3 segundos)</option></select><p>Controle local da interface para testar carregamento e erro.</p><a class="official-link" href="${officialSource}" target="_blank" rel="noopener noreferrer">Orientação oficial do SAMU · Ministério da Saúde ↗<span class="sr-only"> (abre em nova aba)</span></a></div></details>
-        <div id="unit-list" class="unit-list" aria-busy="true"></div>
-        <p class="clinical-note">${clinicalWarning}</p>
+        <div id="sheet-settings" class="sheet-settings"><div class="list-tools"><span id="sort-label">Mais próximas</span><button id="locate-me" class="locate-button" type="button" aria-pressed="false">Usar minha localização</button></div>
+        <details id="about" class="about"><summary>Sobre os dados</summary><div class="about-content"><h2>Unidades públicas de saúde em São Paulo.</h2><p>Consulte UBS, UPAs e hospitais da rede SUS em São Paulo com localização, horário de funcionamento e tempo estimado de espera no mapa e na lista.</p><p id="map-help">No mapa, use as setas para mover e +/− para ampliar ou reduzir. Selecione um marcador ou uma unidade na lista.</p><label for="scenario">Simular estado de carregamento</label><select id="scenario"><option value="normal">Carregamento normal</option><option value="error">Falha simulada (repetir recupera)</option><option value="slow">Carregamento lento (3 segundos)</option></select><p>Controle local da interface para testar carregamento e erro.</p><a class="official-link" href="${officialSource}" target="_blank" rel="noopener noreferrer">Orientação oficial do SAMU · Ministério da Saúde ↗<span class="sr-only"> (abre em nova aba)</span></a></div></details>
+        </div><div id="unit-list" class="unit-list" aria-busy="true"></div>
       </div>
     </section>
     <section class="map-panel" aria-labelledby="map-title">
@@ -110,10 +111,12 @@ const sheet = document.querySelector<HTMLElement>('.list-panel')!;
 const sheetSummary = document.querySelector<HTMLElement>('.sheet-summary')!;
 const sheetContent = document.querySelector<HTMLDivElement>('#sheet-content')!;
 const toggleList = document.querySelector<HTMLButtonElement>('#toggle-list')!;
+const settingsToggle = document.querySelector<HTMLButtonElement>('#settings-toggle')!;
 const sortLabel = document.querySelector<HTMLSpanElement>('#sort-label')!;
 const locateMe = document.querySelector<HTMLButtonElement>('#locate-me')!;
 const mobileLayout = matchMedia('(max-width: 900px)');
 let listExpanded = false;
+let searching = false;
 let units: HealthUnit[] = [];
 let type: UnitType | 'all' = 'all';
 let status: 'loading' | 'ready' | 'error' = 'loading';
@@ -231,6 +234,7 @@ function reportMapStatus(state: MapStatus) {
 }
 
 function setSheetExpanded(expanded: boolean, moveFocus = true) {
+  if (!expanded && mobileLayout.matches && searching) setSearching(false);
   listExpanded = expanded;
   const collapsed = mobileLayout.matches && !expanded;
   sheet.dataset.expanded = String(expanded);
@@ -238,11 +242,21 @@ function setSheetExpanded(expanded: boolean, moveFocus = true) {
   sheetContent.inert = collapsed;
   toggleList.setAttribute('aria-expanded', String(expanded));
   toggleList.setAttribute('aria-label', expanded ? 'Recolher lista' : 'Expandir lista');
+  if (expanded && mobileLayout.matches && selectedId) {
+    requestAnimationFrame(() => list.querySelector<HTMLElement>('.unit-card.is-selected')?.scrollIntoView({ block: 'nearest', behavior: 'instant' }));
+  }
   if (moveFocus && mobileLayout.matches) {
     if (expanded) sheetContent.focus({ preventScroll: true });
     else toggleList.focus({ preventScroll: true });
   }
 }
+
+settingsToggle.addEventListener('click', () => {
+  const open = settingsToggle.getAttribute('aria-expanded') !== 'true';
+  sheet.dataset.settingsOpen = String(open);
+  settingsToggle.setAttribute('aria-expanded', String(open));
+  if (open && !listExpanded) setSheetExpanded(true, false);
+});
 
 const layoutObserver = new ResizeObserver(() => {
   const root = document.documentElement;
@@ -251,7 +265,7 @@ const layoutObserver = new ResizeObserver(() => {
 });
 layoutObserver.observe(sheet);
 layoutObserver.observe(document.querySelector('.site-header')!);
-mobileLayout.addEventListener('change', () => setSheetExpanded(listExpanded, false));
+mobileLayout.addEventListener('change', () => { setSheetExpanded(listExpanded, false); render(); });
 
 let dragStartY = 0;
 let dragStartHeight = 0;
@@ -263,7 +277,7 @@ let collapsedDragHeight = 0;
 let expandedDragHeight = 0;
 
 sheetSummary.addEventListener('pointerdown', event => {
-  if (!mobileLayout.matches || (event.pointerType === 'mouse' && event.button !== 0)) return;
+  if (!mobileLayout.matches || (event.target as Element).closest('#settings-toggle') || (event.pointerType === 'mouse' && event.button !== 0)) return;
   activePointerId = event.pointerId;
   dragStartY = event.clientY;
   dragStartHeight = sheet.getBoundingClientRect().height;
@@ -347,7 +361,7 @@ async function startMap() {
       container,
       mapReference,
       reportMapStatus,
-      showDetails,
+      selectUnit,
       center => {
         mapCenter = center;
         if (userLocation || status !== 'ready') return;
@@ -438,13 +452,14 @@ function card(unit: HealthUnit, index: number) {
   const id = escapeHtml(unit.id);
   const level = tone(unit);
   const { distance, arrival, totalLine, calculated } = journeySummary(unit);
-  return `<article class="unit-card${selectedId === unit.id ? ' is-selected' : ''}" data-card="${id}" aria-labelledby="name-${id}">
+  const selected = selectedId === unit.id;
+  return `<article class="unit-card${selected ? ' is-selected' : ''}" data-card="${id}" aria-labelledby="name-${id}">
     <div class="card-head">
       <div class="card-heading">
         <h3 id="name-${id}">${escapeHtml(unit.name)}</h3>
         <p class="card-meta"><span class="unit-number">${unitNumber(unit)}</span><span class="unit-type">${unitTypeIcon(unit.type)}<span>${unit.type}</span></span><span aria-hidden="true">·</span><span class="unit-distance">${escapeHtml(distance)}${calculated ? ` (~${escapeHtml(arrival)})` : ''}</span><span aria-hidden="true">·</span><span>${escapeHtml(unit.neighborhood)}</span>${index === 0 ? '<span class="nearest-badge">Mais próxima em linha reta</span>' : ''}${unit.data.status === 'stale' ? '<strong class="stale-flag">Dados desatualizados</strong>' : ''}</p>
       </div>
-      <span class="card-chevron" aria-hidden="true">›</span>
+      <button class="card-select" type="button" data-unit="${id}" aria-pressed="${selected}" aria-label="Selecionar ${escapeHtml(unit.name)} no mapa"><span class="card-chevron" aria-hidden="true">›</span></button>
     </div>
     <div class="queue-panel ${level}">
       ${statusRing(level, 'md', waitMinutes(unit))}
@@ -457,11 +472,6 @@ function card(unit: HealthUnit, index: number) {
     <p class="address">${escapeHtml(unit.address)}<br>${escapeHtml(unit.neighborhood)} · ${escapeHtml(unit.city)}</p>
     <p class="hours">${escapeHtml(unit.openingHours)}</p>
     <div class="data-source"><p>${escapeHtml(unit.data.source)}</p><p>${escapeHtml(formatUpdatedAt(unit))}</p></div>
-    <div class="card-actions">
-      <button class="details-button" type="button" data-unit="${id}" aria-expanded="${selectedId === unit.id}" aria-controls="info-${id}" aria-label="Ver detalhes de ${escapeHtml(unit.name)}">${selectedId === unit.id ? 'Ocultar detalhes' : 'Ver detalhes'}</button>
-      <button class="route-link" type="button" data-route="${id}" ${calculated ? '' : 'disabled'} aria-label="Ver trajeto para ${escapeHtml(unit.name)}">Ver trajeto no mapa <span aria-hidden="true">↗</span></button>
-    </div>
-    <div class="inline-unit-info" id="info-${id}" ${selectedId === unit.id ? '' : 'hidden'}><p>${escapeHtml(unit.description)}</p></div>
   </article>`;
 }
 
@@ -484,12 +494,41 @@ function render() {
   }
   renderedCenter = { ...mapCenter };
   const visible = sortByNearest(filterUnits(units, search.value, type), activeOrigin());
-  if (!visible.some(unit => unit.id === selectedId)) selectedId = null;
+  if (!(mobileLayout.matches && searching) && !visible.some(unit => unit.id === selectedId)) selectedId = null;
+  updateSelectedSummary();
   drawJourney();
   count.textContent = `${visible.length} ${visible.length === 1 ? 'unidade encontrada' : 'unidades encontradas'}`;
   mapState.textContent = visible.length ? '' : 'Nenhuma unidade para estes filtros. Ajuste a busca ou limpe os filtros.';
   syncMap();
-  list.innerHTML = visible.length ? visible.map((unit, index) => card(unit, index)).join('') : `<div class="state-card"><span class="state-symbol" aria-hidden="true">∅</span><h3>Nenhuma unidade encontrada</h3><p>Tente outro nome, bairro ou remova os filtros para explorar as ${units.length} unidades.</p><button type="button" class="button primary" id="clear-filters">Limpar busca e filtros</button></div>`;
+  const displayed = mobileLayout.matches && !searching ? visible.filter(unit => unit.id === selectedId) : visible;
+  list.innerHTML = displayed.length ? displayed.map(unit => card(unit, visible.indexOf(unit))).join('')
+    : mobileLayout.matches && !searching ? '<div class="state-card"><p>Selecione uma unidade no mapa ou pesquise pelo nome.</p></div>'
+    : `<div class="state-card"><span class="state-symbol" aria-hidden="true">∅</span><h3>Nenhuma unidade encontrada</h3><p>Tente outro nome, bairro ou remova os filtros para explorar as ${units.length} unidades.</p><button type="button" class="button primary" id="clear-filters">Limpar busca e filtros</button></div>`;
+}
+
+function updateSelectedSummary() {
+  const unit = units.find(item => item.id === selectedId);
+  sheet.dataset.selected = String(!!unit);
+  const summary = document.querySelector<HTMLElement>('#selected-summary')!;
+  summary.hidden = !unit;
+  if (unit) {
+    const level = tone(unit);
+    document.querySelector('#selected-summary-name')!.textContent = unit.name;
+    summary.querySelector<HTMLElement>('.selected-summary-panel')!.className = `selected-summary-panel ${level}`;
+    document.querySelector('#selected-summary-ring')!.innerHTML = statusRing(level, 'md', waitMinutes(unit));
+    const queueEl = document.querySelector<HTMLElement>('#selected-summary-queue')!;
+    queueEl.className = `selected-summary-queue ${level}`;
+    queueEl.textContent = unit.data.status === 'available'
+      ? `${queueLabel(unit)} · ${formatWait(unit)}`
+      : queueLabel(unit);
+    const { total } = journeySummary(unit);
+    const waitEl = document.querySelector<HTMLElement>('#selected-summary-wait')!;
+    waitEl.dataset.hasTotal = String(!!total);
+    waitEl.textContent = total ? `Tempo total: ${total}`
+      : journeyState === 'loading' ? 'Calculando tempo total…'
+      : !userLocation ? 'Ative a localização para calcular o tempo total'
+      : 'Tempo total indisponível';
+  }
 }
 
 async function loadUnits(mode = 'normal') {
@@ -511,27 +550,58 @@ async function loadUnits(mode = 'normal') {
   render();
 }
 
-function showDetails(id: string, trigger: HTMLElement) {
+function selectUnit(id: string, trigger: HTMLElement) {
   if (!units.some(unit => unit.id === id)) return;
   const fromMap = !list.contains(trigger);
+  if (mobileLayout.matches) {
+    selectedId = id;
+    if (searching) setSearching(false);
+    else render();
+    if (fromMap) setSheetExpanded(false, false);
+    else {
+      drawJourney(true);
+      try { cityMap?.select(selectedId); } catch { reportMapStatus('error'); }
+      list.querySelector<HTMLButtonElement>('.unit-card.is-selected .card-select')?.focus({ preventScroll: true });
+    }
+    return;
+  }
   selectedId = !fromMap && selectedId === id ? null : id;
-  drawJourney();
+  updateSelectedSummary();
+  drawJourney(!fromMap && selectedId !== null);
   try { cityMap?.select(selectedId); } catch { reportMapStatus('error'); }
   for (const element of list.querySelectorAll<HTMLElement>('[data-card]')) {
     const selected = element.dataset.card === selectedId;
     element.classList.toggle('is-selected', selected);
-    const button = element.querySelector<HTMLButtonElement>('.details-button')!;
-    button.setAttribute('aria-expanded', String(selected));
-    button.textContent = selected ? 'Ocultar detalhes' : 'Ver detalhes';
-    element.querySelector<HTMLElement>('.inline-unit-info')!.hidden = !selected;
+    element.querySelector<HTMLButtonElement>('.card-select')?.setAttribute('aria-pressed', String(selected));
   }
   if (fromMap && selectedId) {
-    if (mobileLayout.matches) setSheetExpanded(true, false);
     const selectedCard = [...list.querySelectorAll<HTMLElement>('[data-card]')].find(element => element.dataset.card === id);
     selectedCard?.scrollIntoView({ block: 'nearest', behavior: 'instant' });
   }
 }
 
+function setSearching(active: boolean) {
+  searching = active;
+  sheet.dataset.searching = String(active);
+  document.querySelector<HTMLButtonElement>('#close-search')!.hidden = !active;
+  if (active) {
+    sheet.dataset.settingsOpen = 'false';
+    settingsToggle.setAttribute('aria-expanded', 'false');
+    setSheetExpanded(true, false);
+  } else {
+    search.value = '';
+  }
+  render();
+}
+
+search.addEventListener('focus', () => {
+  if (mobileLayout.matches && !searching) setSearching(true);
+});
+document.querySelector<HTMLButtonElement>('#close-search')!.addEventListener('click', () => {
+  setSearching(false);
+  setSheetExpanded(false, false);
+  search.blur();
+});
 search.addEventListener('input', render);
 document.querySelector('.filters')!.addEventListener('click', event => {
   const button = (event.target as Element).closest<HTMLButtonElement>('button[data-type]');
@@ -543,14 +613,7 @@ document.querySelector('.filters')!.addEventListener('click', event => {
 document.querySelector('.workspace')!.addEventListener('click', event => {
   const button = (event.target as Element).closest<HTMLButtonElement>('button');
   if (!button) return;
-  if (button.dataset.unit) showDetails(button.dataset.unit, button);
-  if (button.dataset.route) {
-    selectedId = button.dataset.route;
-    drawJourney(true);
-    cityMap?.select(selectedId);
-    if (mobileLayout.matches) setSheetExpanded(false);
-    render();
-  }
+  if (button.dataset.unit) selectUnit(button.dataset.unit, button);
   if (button.id === 'retry-journeys') void loadJourneys();
   if (button.id === 'retry') {
     scenario.value = 'normal';

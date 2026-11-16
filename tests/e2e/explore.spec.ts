@@ -34,12 +34,11 @@ const names = [
   'UPA Vera Cruz',
   'UPA Vergueiro',
 ];
-const clinicalWarning = 'A prioridade clínica e a unidade adequada dependem da avaliação da equipe de saúde.';
 const map = (page: Page) => page.getByRole('group', { name: 'Unidades de saúde no mapa de São Paulo' });
 const search = (page: Page) => page.getByRole('searchbox', { name: 'Buscar unidade por nome ou bairro' });
 const scenario = (page: Page) => page.getByLabel('Simular estado de carregamento');
 const card = (page: Page, name: string) => page.getByRole('article', { name, exact: true });
-const details = (page: Page, name: string) => page.getByRole('button', { name: `Ver detalhes de ${name}`, exact: true });
+const selectCard = (page: Page, name: string) => page.getByRole('button', { name: `Selecionar ${name} no mapa`, exact: true });
 const marker = (page: Page, name: string) => map(page).getByRole('button', {
   name: new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
 });
@@ -60,7 +59,6 @@ async function expectResults(page: Page, expected: string[]) {
 }
 
 async function expectSafety(root: Page | Locator, inDialog = false) {
-  await expect(root.locator('.clinical-note').filter({ visible: true }).first()).toContainText(clinicalWarning);
   const call = root.getByRole('link', { name: /SAMU 192/ }).first();
   await expect(call).toBeVisible();
   await expect(call).toHaveAttribute('href', 'tel:192');
@@ -87,32 +85,29 @@ test('cenário inicial exibe unidades reais com filas simuladas para demonstraç
   await page.reload();
   await expectResults(page, names);
   await expectSafety(page);
-  const notice = page.locator('.clinical-note').first();
-  await expect(notice).toContainText(clinicalWarning);
-  await expect(notice).toBeVisible();
+  await expect(page.locator('.clinical-note')).toHaveCount(0);
   await expect(page.locator('#map-title')).toHaveText('São Paulo');
   await openAbout(page);
   await expect(page.locator('#about')).toContainText('Consulte UBS, UPAs e hospitais da rede SUS em São Paulo');
+  await openList(page);
   await expect(card(page, names[5])).toContainText('Av. Celso Garcia, 4815');
   await expect(card(page, names[5])).toContainText('Fila alta');
   await expect(card(page, names[5])).toContainText('Espera estimada: 70 min');
-  await expect(notice).toContainText(clinicalWarning);
 
   await selectScenario(page, 'error');
   await expect(page.getByRole('alert')).toBeVisible();
-  await expect(notice).toContainText(clinicalWarning);
   await expectSafety(page);
   await page.clock.install();
   await selectScenario(page, 'slow');
   await expect(page.locator('#unit-list')).toHaveAttribute('aria-busy', 'true');
-  await expect(notice).toContainText(clinicalWarning);
   await expectSafety(page);
   await page.clock.fastForward(3000);
   await expect(page.locator('#result-count')).toHaveText('30 unidades encontradas');
-  await details(page, names[17]).click();
-  await expect(card(page, names[17]).locator('.inline-unit-info')).toBeVisible();
+  await openList(page);
+  await selectCard(page, names[17]).click();
+  await expect(card(page, names[17])).toHaveClass(/is-selected/);
+  await expect(card(page, names[17]).locator('.card-actions, .inline-unit-info')).toHaveCount(0);
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await expect(notice).toBeVisible();
   expect(errors).toEqual([]);
   expect(external).toEqual([]);
 });
@@ -146,26 +141,70 @@ test('busca normaliza texto e combina tipos sem deixar marcadores residuais', as
   await expectResults(page, names);
 });
 
-test('seleção pela lista e pelo mapa mostra detalhes no cartão', async ({ page }) => {
+test('seleção pela lista e pelo mapa sincroniza cartão e marcador sem abrir diálogo', async ({ page, isMobile }) => {
   for (const name of [names[0], names[17], names[29]]) {
     await openList(page);
     const item = card(page, name);
-    await details(page, name).click();
-    await expect(item.locator('.inline-unit-info')).toBeVisible();
-    await expect(details(page, name)).toHaveAttribute('aria-expanded', 'true');
+    await selectCard(page, name).click();
+    await expect(item).toHaveClass(/is-selected/);
+    await expect(selectCard(page, name)).toHaveAttribute('aria-pressed', 'true');
+    await expect(marker(page, name)).toHaveAttribute('aria-pressed', 'true');
     await expect(page.getByRole('dialog')).toHaveCount(0);
-    await details(page, name).click();
-    await expect(item.locator('.inline-unit-info')).toBeHidden();
+    if (!isMobile) {
+      await selectCard(page, name).click();
+      await expect(item).not.toHaveClass(/is-selected/);
+      await expect(selectCard(page, name)).toHaveAttribute('aria-pressed', 'false');
+    }
     await closeList(page);
     await marker(page, name).click();
     await openList(page);
-    await expect(item.locator('.inline-unit-info')).toBeVisible();
+    await expect(item).toHaveClass(/is-selected/);
     await expect(marker(page, name)).toHaveAttribute('aria-pressed', 'true');
     await expect(page.getByRole('dialog')).toHaveCount(0);
   }
   await search(page).fill('tatuape');
   await expectResults(page, [names[5]]);
   await expect(map(page).getByRole('button', { pressed: true })).toHaveCount(0);
+});
+
+test('no celular, seleção no mapa mantém a lista recolhida e configurações ficam na engrenagem', async ({ page, isMobile }) => {
+  test.skip(!isMobile, 'Comportamento específico de celular');
+  await closeList(page);
+  await marker(page, names[0]).click();
+  await expect(page.locator('#toggle-list')).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('#selected-summary')).toContainText(names[0]);
+  await expect(page.locator('.sheet-summary-text')).toBeHidden();
+  const settings = page.getByRole('button', { name: 'Configurações' });
+  await expect(settings).toBeVisible();
+  await settings.click();
+  await expect(settings).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByRole('button', { name: 'Corrigir localização no mapa' })).toBeVisible();
+  await expect(page.locator('#about')).toBeVisible();
+  await settings.click();
+  await expect(page.locator('#sheet-settings')).toBeHidden();
+});
+
+test('no celular, painel mostra só a unidade escolhida e a pesquisa abre a lista', async ({ page, isMobile }) => {
+  test.skip(!isMobile, 'Comportamento específico de celular');
+  await closeList(page);
+  await marker(page, names[0]).click();
+  await page.getByRole('button', { name: 'Expandir lista' }).click();
+  await expect(page.locator('#unit-list [data-card]')).toHaveCount(1);
+  await expect(card(page, names[0])).toBeVisible();
+  await search(page).click();
+  await expect(page.getByRole('button', { name: 'Voltar ao mapa' })).toBeVisible();
+  await expect(page.locator('#unit-list [data-card]')).toHaveCount(30);
+  await search(page).fill('casa verde');
+  await expect(page.locator('#unit-list [data-card]')).toHaveCount(1);
+  await selectCard(page, 'UBS Casa Verde').click();
+  await expect(page.locator('#unit-list [data-card]')).toHaveCount(1);
+  await expect(card(page, 'UBS Casa Verde')).toBeVisible();
+  await expect(page.locator('#selected-summary-name')).toHaveText('UBS Casa Verde');
+  await search(page).click();
+  await expect(page.locator('#unit-list [data-card]')).toHaveCount(30);
+  await page.getByRole('button', { name: 'Voltar ao mapa' }).click();
+  await expect(page.locator('#sheet-content')).toBeHidden();
+  await expect(page.locator('#selected-summary-name')).toHaveText('UBS Casa Verde');
 });
 
 test('filas simuladas e ausência de dados exibem status explícito sem converter lacunas em zero', async ({ page }) => {
@@ -188,26 +227,29 @@ test('filas simuladas e ausência de dados exibem status explícito sem converte
   ];
 
   for (const state of states) {
+    await openList(page);
     const item = card(page, state.name);
     await expect(item.locator('.wait')).toHaveText(state.wait);
     await expect(item.locator('.queue-badge')).toHaveText(state.badge);
     await expect(marker(page, state.name)).toHaveAttribute('aria-label', state.aria);
-    await details(page, state.name).click();
-    await expect(item.locator('.inline-unit-info')).toBeVisible();
+    await selectCard(page, state.name).click();
+    await expect(item).toHaveClass(/is-selected/);
     await expect(page.getByRole('dialog')).toHaveCount(0);
   }
 });
 
-test('detalhes podem ser abertos e fechados pelo teclado', async ({ page }) => {
-  const trigger = details(page, names[17]);
+test('seleção na lista funciona pelo teclado', async ({ page, isMobile }) => {
+  const trigger = selectCard(page, names[17]);
   await page.keyboard.press('Tab');
   await trigger.focus();
   await trigger.press('Enter');
-  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
-  await expect(card(page, names[17]).locator('.inline-unit-info')).toBeVisible();
+  await expect(trigger).toHaveAttribute('aria-pressed', 'true');
+  await expect(card(page, names[17])).toHaveClass(/is-selected/);
   await expect(trigger).toBeFocused();
-  await trigger.press('Enter');
-  await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+  if (!isMobile) {
+    await trigger.press('Enter');
+    await expect(trigger).toHaveAttribute('aria-pressed', 'false');
+  }
   await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
@@ -225,8 +267,8 @@ test('falha simulada preserva segurança e repetir recupera sem perder filtros',
   await expect(search(page)).toBeFocused();
   await expect(scenario(page)).toHaveValue('normal');
   await expect(page.getByRole('button', { name: 'UBS', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await details(page, names[17]).click();
-  await expect(card(page, names[17]).locator('.inline-unit-info')).toBeVisible();
+  await selectCard(page, names[17]).click();
+  await expect(card(page, names[17])).toHaveClass(/is-selected/);
 });
 
 test('carga lenta é observável e leitura antiga não sobrescreve falha ou recuperação', async ({ page }) => {
@@ -270,7 +312,7 @@ test('layout preserva leitura, toque e movimento reduzido', async ({ page, isMob
     const position = await page.locator('.map-canvas').boundingBox();
     expect(position!.y).toBeLessThanOrEqual(500);
   }
-  const controls = page.locator('.filters button, .map-marker, .details-button, #scenario');
+  const controls = page.locator('.filters button, .map-marker, .card-select, #scenario');
   for (const control of await controls.all()) {
     const box = await control.boundingBox();
     expect(box!.width).toBeGreaterThanOrEqual(44);
@@ -280,11 +322,11 @@ test('layout preserva leitura, toque e movimento reduzido', async ({ page, isMob
     await page.setViewportSize({ width, height: 900 });
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await expect(search(page)).toBeVisible();
-    await details(page, names[17]).click();
-    const info = card(page, names[17]).locator('.inline-unit-info');
-    await expect(info).toBeVisible();
-    expect(await info.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
-    await details(page, names[17]).click();
+    await selectCard(page, names[17]).click();
+    const selectedCard = card(page, names[17]);
+    await expect(selectedCard).toHaveClass(/is-selected/);
+    expect(await selectedCard.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    if (!isMobile) await selectCard(page, names[17]).click();
   }
   await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
