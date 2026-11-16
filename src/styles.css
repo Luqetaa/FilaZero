@@ -55,6 +55,7 @@ body { margin: 0; background: #eff2f6; }
 }
 .initial-route-loading-card strong { display: block; margin-top: 16px; font-size: 1.1rem; }
 .initial-route-loading-card p { margin-top: 8px; color: var(--muted); font-size: .85rem; }
+.initial-route-loading-card button { margin-top: 20px; pointer-events: auto; }
 .initial-route-spinner {
   display: block;
   width: 34px;

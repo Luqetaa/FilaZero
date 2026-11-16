@@ -94,6 +94,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <span class="initial-route-spinner" aria-hidden="true"></span>
       <strong>Preparando os trajetos</strong>
       <p>Calculando os percursos das unidades a partir da sua localização. Na primeira vez, isso pode levar um pouco mais de tempo.</p>
+      <button id="continue-loading" class="button" type="button">Continuar enquanto calcula</button>
     </div>
   </div>
 `;
@@ -136,6 +137,10 @@ let journeyVersion = 0;
 let journeyController: AbortController | null = null;
 let initialJourneysFinished = false;
 const initialRouteLoading = document.querySelector<HTMLElement>('#initial-route-loading')!;
+document.querySelector<HTMLButtonElement>('#continue-loading')!.addEventListener('click', () => {
+  initialJourneysFinished = true;
+  initialRouteLoading.hidden = true;
+});
 let locationAccuracy: number | null = null;
 let locationTimestamp = 0;
 let manualOrigin = false;
@@ -569,7 +574,7 @@ function startWatchingUserLocation() {
       if (!Number.isFinite(accuracy) || accuracy <= 0 || pos.timestamp < locationTimestamp) return;
       const distance = userLocation ? distanceKm(userLocation, next) * 1000 : Infinity;
       if (userLocation && locationAccuracy !== null && accuracy > locationAccuracy && distance <= accuracy + locationAccuracy && pos.timestamp - locationTimestamp < 60_000) return;
-      if (distance < 20 && locationAccuracy !== null && accuracy >= locationAccuracy) return;
+      if (distance < 20) return;
       userLocation = next;
       locationAccuracy = accuracy;
       locationTimestamp = pos.timestamp;
@@ -606,8 +611,8 @@ function requestUserLocation(center = true, silent = false) {
       locationAccuracy = pos.coords.accuracy;
       locationTimestamp = pos.timestamp;
       cityMap?.setUserLocation(userLocation, { center: center && (!silent || !hasManualPan), accuracy: locationAccuracy });
-      startWatchingUserLocation();
       void loadJourneys();
+      startWatchingUserLocation();
       render();
     },
     () => {

@@ -69,11 +69,12 @@ class RedeOSM:
             sentido = tags.get("oneway:motorcar", tags.get("oneway:motor_vehicle", tags.get("oneway")))
             if sentido is None:
                 sentido = "yes" if tags.get("junction") in {"roundabout", "circular"} or tags["highway"] == "motorway" else "no"
+            metros_por_minuto = velocidade(tags) * 1000 / 60
             for a, b in zip(nos, nos[1:]):
                 if a == b:
                     continue
                 metros = distancia_metros(self.coordenadas[a], self.coordenadas[b])
-                trecho = Trecho(way, self.vias[way]["nome"], metros, metros / (velocidade(tags) * 1000 / 60))
+                trecho = Trecho(way, self.vias[way]["nome"], metros, metros / metros_por_minuto)
                 if sentido not in {"-1", "reverse"}:
                     self.arestas.setdefault((a, b), []).append(trecho)
                 if sentido not in {"yes", "1", "true"}:

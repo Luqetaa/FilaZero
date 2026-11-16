@@ -31,6 +31,25 @@ test.describe('localização autorizada', () => {
     await expect(page.getByRole('button', { name: 'Recalcular trajetos' })).toBeVisible();
   });
 
+  test('permite continuar durante o cálculo sem reiniciá-lo por pequenas variações do GPS', async ({ page }) => {
+    let pending: Route | undefined;
+    let requests = 0;
+    await page.route('**/api/comparar', route => { requests++; pending = route; });
+    await page.goto('/');
+    await expect(page.locator('#initial-route-loading')).toBeVisible();
+    await expect.poll(() => !!pending).toBe(true);
+    await page.evaluate(() => {
+      const send = (window as typeof window & { __e2eWatchSuccess: PositionCallback }).__e2eWatchSuccess;
+      send({ coords: { latitude: -23.55011, longitude: -46.6329, accuracy: 5 }, timestamp: Date.now() + 200 } as GeolocationPosition);
+    });
+    expect(requests).toBe(1);
+    await page.getByRole('button', { name: 'Continuar enquanto calcula' }).click();
+    await expect(page.locator('#initial-route-loading')).toBeHidden();
+    await pending!.continue();
+    await openList(page);
+    await expect(page.locator('#route-api-status')).toContainText('30 de 30 unidades');
+  });
+
   test('catálogo usa GPS e calcula rotas para todas as unidades', async ({ page, isMobile }) => {
     const response = page.waitForResponse(r => r.url().endsWith('/api/comparar') && r.request().method() === 'POST');
     await page.goto('/');
