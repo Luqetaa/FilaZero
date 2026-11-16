@@ -89,6 +89,13 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <div class="map-attribution glass"><a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors<span class="sr-only"> (abre em nova aba)</span></a><span>&nbsp;·&nbsp;</span><a href="https://openfreemap.org" target="_blank" rel="noopener noreferrer">© OpenFreeMap<span class="sr-only"> (abre em nova aba)</span></a><span>&nbsp;·&nbsp;</span><a href="https://openmaptiles.org/" target="_blank" rel="noopener noreferrer">© OpenMapTiles<span class="sr-only"> (abre em nova aba)</span></a></div>
     </section>
   </main>
+  <div id="initial-route-loading" class="initial-route-loading" role="status" aria-live="polite" hidden>
+    <div class="initial-route-loading-card glass-strong">
+      <span class="initial-route-spinner" aria-hidden="true"></span>
+      <strong>Preparando os trajetos</strong>
+      <p>Calculando os percursos das unidades a partir da sua localização. Na primeira vez, isso pode levar um pouco mais de tempo.</p>
+    </div>
+  </div>
 `;
 
 const search = document.querySelector<HTMLInputElement>('#search')!;
@@ -127,6 +134,8 @@ let journeyState: 'idle' | 'loading' | 'ready' | 'error' = 'idle';
 let journeyError = '';
 let journeyVersion = 0;
 let journeyController: AbortController | null = null;
+let initialJourneysFinished = false;
+const initialRouteLoading = document.querySelector<HTMLElement>('#initial-route-loading')!;
 let locationAccuracy: number | null = null;
 let locationTimestamp = 0;
 let manualOrigin = false;
@@ -180,6 +189,7 @@ async function loadJourneys() {
   const controller = journeyController = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 75_000);
   journeyState = 'loading'; routeComparison = null; journeys = new Map();
+  if (!initialJourneysFinished) initialRouteLoading.hidden = false;
   drawJourney(); render();
   try {
     const comparison = await fetchRouteJson<Comparison>('/api/comparar', controller.signal, { origem: userLocation });
@@ -195,6 +205,8 @@ async function loadJourneys() {
   } finally {
     clearTimeout(timeout);
     if (version === journeyVersion) {
+      initialJourneysFinished = true;
+      initialRouteLoading.hidden = true;
       render();
     }
   }

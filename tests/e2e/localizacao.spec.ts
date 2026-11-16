@@ -1,9 +1,35 @@
-import { expect } from '@playwright/test';
+import { expect, type Route } from '@playwright/test';
 import { test } from './fixtures';
 import { openList } from './ui-helpers';
 
 test.describe('localização autorizada', () => {
   test.use({ gpsPosition: { lat: -23.5501, lng: -46.6329 } });
+
+  test('mostra carregamento inicial até os trajetos estarem prontos', async ({ page }) => {
+    let pending: Route | undefined;
+    await page.route('**/api/comparar', route => { pending = route; });
+    await page.goto('/');
+    await expect(page.locator('#initial-route-loading')).toBeVisible();
+    await expect(page.locator('#initial-route-loading')).toContainText('Preparando os trajetos');
+    await expect.poll(() => !!pending).toBe(true);
+    await pending!.continue();
+    await expect(page.locator('#initial-route-loading')).toBeHidden();
+    await openList(page);
+    await expect(page.locator('#route-api-status')).toContainText('30 de 30 unidades');
+  });
+
+  test('remove o carregamento inicial se a API falhar', async ({ page }) => {
+    let pending: Route | undefined;
+    await page.route('**/api/comparar', route => { pending = route; });
+    await page.goto('/');
+    await expect(page.locator('#initial-route-loading')).toBeVisible();
+    await expect.poll(() => !!pending).toBe(true);
+    await pending!.fulfill({ status: 503, contentType: 'application/json', body: '{"erro":"Serviço indisponível"}' });
+    await expect(page.locator('#initial-route-loading')).toBeHidden();
+    await openList(page);
+    await expect(page.locator('#route-api-status')).toContainText('Serviço indisponível');
+    await expect(page.getByRole('button', { name: 'Recalcular trajetos' })).toBeVisible();
+  });
 
   test('catálogo usa GPS e calcula rotas para todas as unidades', async ({ page, isMobile }) => {
     const response = page.waitForResponse(r => r.url().endsWith('/api/comparar') && r.request().method() === 'POST');
